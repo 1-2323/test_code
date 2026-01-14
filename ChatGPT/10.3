@@ -1,0 +1,32 @@
+from io import BytesIO
+
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from PIL import Image
+
+app = FastAPI()
+
+
+@app.post("/image/process")
+async def process_image(
+    file: UploadFile = File(...),
+    width: int = Query(..., gt=0),
+    height: int = Query(..., gt=0),
+):
+    if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(status_code=400, detail="Unsupported image format")
+
+    try:
+        image = Image.open(file.file)
+        image = image.resize((width, height), Image.LANCZOS)
+
+        buffer = BytesIO()
+        image.save(buffer, format=image.format)
+        buffer.seek(0)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Image processing failed") from e
+
+    return StreamingResponse(
+        buffer,
+        media_type=file.content_type,
+    )
