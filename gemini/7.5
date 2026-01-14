@@ -1,0 +1,84 @@
+import uuid
+import json
+from fastapi import FastAPI, Request, HTTPException, Depends
+from redis import Redis
+
+# Инициализация приложения и Redis
+app = FastAPI()
+redis_client = Redis(host='localhost', port=6379, decode_responses=True)
+
+# Константы
+SESSION_EXPIRE = 3600  # 1 час
+
+# --- Вспомогательные функции ---
+
+def get_client_info(request: Request):
+    """Извлекает IP и данные об устройстве из заголовков."""
+    client_ip = request.client.host
+    user_agent = request.headers.get("user-agent", "unknown")
+    return client_ip, user_agent
+
+# --- Основная логика ---
+
+@app.post("/login")
+async def login(user_id: str, request: Request):
+    """Создает сессию, привязанную к IP и устройству."""
+    session_id = str(uuid.uuid4())
+    client_ip, user_agent = get_client_info(request)
+    
+    session_data = {
+        "user_id": user_id,
+        "ip": client_ip,
+        "device": user_agent
+    }
+    
+    # Сохраняем в Redis с временем жизни
+    redis_client.setex(
+        f"session:{session_id}",
+        SESSION_EXPIRE,
+        json.dumps(session_data)
+    )
+    
+    return {"session_id": session_id, "message": "Logged in successfully"}
+
+async def verify_session(request: Request):
+    """
+    Dependency для защиты роутов. 
+    Проверяет сессию на валидность и безопасность.
+    """
+    session_id = request.headers.get("Authorization")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Missing session ID")
+
+    # Получаем данные сессии
+    raw_data = redis_client.get(f"session:{session_id}")
+    if not raw_data:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+
+    session_data = json.loads(raw_data)
+    current_ip, current_agent = get_client_info(request)
+
+    # ПРОВЕРКА БЕЗОПАСНОСТИ: Сравнение IP и устройства
+    if session_data["ip"] != current_ip:
+        # Здесь можно отправить уведомление пользователю о попытке входа
+        raise HTTPException(status_code=403, detail="IP address mismatch. Security alert!")
+    
+    if session_data["device"] != current_agent:
+        raise HTTPException(status_code=403, detail="Device mismatch")
+
+    return session_data
+
+# --- Защищенный маршрут ---
+
+@app.get("/me")
+async def get_me(session: dict = Depends(verify_session)):
+    """Пример защищенного эндпоинта."""
+    return {
+        "user_id": session["user_id"],
+        "status": "Session is secure",
+        "device_info": session["device"]
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
