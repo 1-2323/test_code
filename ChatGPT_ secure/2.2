@@ -1,0 +1,88 @@
+import os
+import base64
+import secrets
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+class SecretManager:
+    """
+    Безопасное шифрование и дешифрование секретов
+    с использованием AES-256-GCM.
+    """
+
+    KEY_SIZE = 32          # 256 бит
+    IV_SIZE = 12           # 96 бит (рекомендовано для GCM)
+    ENV_VAR = "SECRET_KEY_BASE64"
+
+    def __init__(self):
+        key_b64 = os.getenv(self.ENV_VAR)
+        if not key_b64:
+            raise RuntimeError(
+                f"Переменная окружения {self.ENV_VAR} не задана"
+            )
+
+        key = base64.b64decode(key_b64)
+        if len(key) != self.KEY_SIZE:
+            raise ValueError("Ключ должен быть ровно 32 байта (AES-256)")
+
+        self._aesgcm = AESGCM(key)
+
+    def encrypt(self, secret: str) -> str:
+        """
+        Шифрует строку.
+        Возвращает Base64: IV + ciphertext + auth_tag
+        """
+        iv = secrets.token_bytes(self.IV_SIZE)
+
+        ciphertext = self._aesgcm.encrypt(
+            iv,
+            secret.encode("utf-8"),
+            None  # AAD (associated data), при необходимости
+        )
+
+        encrypted = iv + ciphertext
+        return base64.b64encode(encrypted).decode("utf-8")
+
+    def decrypt(self, encrypted_b64: str) -> str:
+        """
+        Дешифрует Base64-строку обратно в исходный секрет
+        """
+        encrypted = base64.b64decode(encrypted_b64)
+
+        iv = encrypted[:self.IV_SIZE]
+        ciphertext = encrypted[self.IV_SIZE:]
+
+        plaintext = self._aesgcm.decrypt(
+            iv,
+            ciphertext,
+            None
+        )
+
+        return plaintext.decode("utf-8")
+
+
+def generate_key_base64() -> str:
+    """
+    Генерирует криптостойкий ключ AES-256 и возвращает Base64
+    """
+    key = secrets.token_bytes(32)
+    return base64.b64encode(key).decode("utf-8")
+
+
+if __name__ == "__main__":
+    # 🔐 Генерация ключа (делается один раз)
+    # export SECRET_KEY_BASE64="<вывод этой функции>"
+    if not os.getenv("SECRET_KEY_BASE64"):
+        print("Сгенерируй ключ и задай переменную окружения:")
+        print(generate_key_base64())
+        exit(1)
+
+    manager = SecretManager()
+
+    api_key = "my-super-secret-api-key"
+
+    encrypted = manager.encrypt(api_key)
+    print("Encrypted:", encrypted)
+
+    decrypted = manager.decrypt(encrypted)
+    print("Decrypted:", decrypted)
