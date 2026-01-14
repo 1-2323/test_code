@@ -1,0 +1,49 @@
+import requests
+from typing import Dict, Any
+
+def verify_license(api_url: str, license_key: str, hardware_id: str) -> bool:
+    """
+    Проверяет лицензию на удаленном сервере.
+    Реализует логику fail-closed: любая ошибка приводит к False.
+    """
+    payload = {
+        "license_key": license_key,
+        "hwid": hardware_id
+    }
+
+    try:
+        # Устанавливаем короткий timeout, чтобы приложение не зависало
+        response = requests.post(api_url, json=payload, timeout=10)
+        
+        # Генерирует исключение для кодов 4xx и 5xx
+        response.raise_for_status()
+        
+        data: Dict[str, Any] = response.json()
+        
+        # Проверяем конкретный флаг в ответе сервера
+        if data.get("status") == "active":
+            return True
+        else:
+            print("Лицензия недействительна или истекла.")
+            return False
+
+    except requests.exceptions.RequestException as e:
+        # Логируем ошибку (в реальном приложении лучше использовать logging)
+        print(f"Критическая ошибка проверки (fail-closed): {e}")
+        # Блокируем доступ, так как сервер недоступен или вернул ошибку
+        return False
+    except ValueError:
+        print("Ошибка парсинга ответа от сервера.")
+        return False
+
+# --- Пример использования ---
+LICENSE_SERVER = "https://api.your-service.com/v1/verify"
+USER_KEY = "ABCDE-12345"
+DEVICE_ID = "machine-unique-id"
+
+if verify_license(LICENSE_SERVER, USER_KEY, DEVICE_ID):
+    print("Доступ разрешен. Запуск программы...")
+    # Код инициализации приложения
+else:
+    print("Доступ запрещен. Завершение работы.")
+    exit(1)
