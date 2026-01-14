@@ -1,0 +1,39 @@
+from fastapi import FastAPI
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from passlib.context import CryptContext
+
+from models import Base, User  # предполагается наличие модели User
+
+DATABASE_URL = "sqlite:///./app.db"
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin"
+
+engine = create_engine(DATABASE_URL, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def init_admin() -> None:
+    Base.metadata.create_all(bind=engine)
+
+    with SessionLocal() as session:
+        stmt = select(User).where(User.username == ADMIN_USERNAME)
+        if session.execute(stmt).scalar_one_or_none():
+            return
+
+        admin = User(
+            username=ADMIN_USERNAME,
+            password_hash=get_password_hash(ADMIN_PASSWORD),
+            is_admin=True,
+            is_active=True,
+        )
+        session.add(admin)
+        session.commit()
+
+def create_app() -> FastAPI:
+    app = FastAPI(on_startup=[init_admin])
+    return app
