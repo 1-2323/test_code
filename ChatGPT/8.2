@@ -1,0 +1,84 @@
+import json
+import pickle
+from pathlib import Path
+from typing import Any, Union
+
+
+class DeserializationError(Exception):
+    """Ошибка десериализации данных."""
+    pass
+
+
+class ObjectDeserializer:
+    """
+    Класс для десериализации объектов из различных форматов.
+    Поддерживаемые форматы: JSON, pickle.
+    """
+
+    @staticmethod
+    def from_bytes(data: bytes, format: str) -> Any:
+        """
+        Десериализация из байтов.
+        """
+        try:
+            format = format.lower()
+
+            if format == "json":
+                return json.loads(data.decode("utf-8"))
+
+            elif format == "pickle":
+                return pickle.loads(data)
+
+            else:
+                raise ValueError(f"Неподдерживаемый формат: {format}")
+
+        except Exception as e:
+            raise DeserializationError(f"Ошибка десериализации: {e}") from e
+
+    @staticmethod
+    def from_string(data: str, format: str) -> Any:
+        """
+        Десериализация из строки.
+        """
+        try:
+            format = format.lower()
+
+            if format == "json":
+                return json.loads(data)
+
+            elif format == "pickle":
+                # pickle не работает со строками напрямую
+                raise ValueError("Pickle требует байты, а не строку")
+
+            else:
+                raise ValueError(f"Неподдерживаемый формат: {format}")
+
+        except Exception as e:
+            raise DeserializationError(f"Ошибка десериализации: {e}") from e
+
+    @staticmethod
+    def from_file(path: Union[str, Path]) -> Any:
+        """
+        Десериализация из файла. Формат определяется по расширению.
+        """
+        path = Path(path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Файл не найден: {path}")
+
+        suffix = path.suffix.lower()
+
+        try:
+            if suffix == ".json":
+                with path.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+
+            elif suffix in {".pkl", ".pickle"}:
+                with path.open("rb") as f:
+                    return pickle.load(f)
+
+            else:
+                raise ValueError(f"Неподдерживаемое расширение файла: {suffix}")
+
+        except Exception as e:
+            raise DeserializationError(f"Ошибка десериализации файла {path}: {e}") from e
