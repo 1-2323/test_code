@@ -1,0 +1,36 @@
+from fastapi import FastAPI, Request
+import logging
+import re
+
+app = FastAPI()
+
+logging.basicConfig(
+    filename="requests.log",
+    level=logging.INFO,
+    format="%(asctime)s %(message)s",
+)
+
+CONTROL_CHARS_RE = re.compile(r"[\r\n]+")
+
+def sanitize(value: str) -> str:
+    return CONTROL_CHARS_RE.sub(" ", value)
+
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    headers = {
+        k: sanitize(v)
+        for k, v in request.headers.items()
+    }
+
+    user_agent = headers.get("user-agent", "")
+
+    logging.info(
+        "method=%s path=%s user_agent=%s headers=%s",
+        request.method,
+        request.url.path,
+        user_agent,
+        headers,
+    )
+
+    response = await call_next(request)
+    return response
