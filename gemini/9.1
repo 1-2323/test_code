@@ -1,0 +1,40 @@
+import logging
+import time
+from fastapi import FastAPI, Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Настройка логгера
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("auth_events.log"), logging.StreamHandler()]
+)
+logger = logging.getLogger("auth_logger")
+
+class AuthLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Логируем только эндпоинты, связанные с аутентификацией
+        auth_paths = ["/login", "/token", "/auth"]
+        is_auth_route = any(path in request.url.path for path in auth_paths)
+        
+        response: Response = await call_next(request)
+
+        if is_auth_route:
+            client_ip = request.client.host
+            # Пытаемся достать username из тела запроса или заголовков (зависит от реализации)
+            # В данном примере логируем статус и IP
+            if response.status_code == 200:
+                logger.info(f"SUCCESSFUL LOGIN: IP {client_ip} | Path: {request.url.path}")
+            elif response.status_code in [401, 403]:
+                logger.warning(f"FAILED LOGIN ATTEMPT: IP {client_ip} | Status: {response.status_code}")
+                
+        return response
+
+app = FastAPI()
+
+# Добавление middleware в приложение
+app.add_middleware(AuthLoggingMiddleware)
+
+@app.post("/login")
+async def login():
+    return {"message": "login successful"}
