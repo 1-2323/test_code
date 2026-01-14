@@ -1,0 +1,37 @@
+from datetime import datetime
+from dateutil import parser
+from typing import Optional, Union
+
+class DateUtility:
+    """Утилита для разбора и форматирования дат из пользовательского ввода."""
+
+    @staticmethod
+    def parse_user_date(date_str: str) -> Optional[datetime]:
+        """
+        Парсит строку в объект datetime. 
+        Поддерживает большинство мировых форматов благодаря fuzzy=True.
+        """
+        try:
+            # fuzzy=True позволяет игнорировать лишние слова в строке
+            # dayfirst=True полезен для RU/EU локалей (10.01 -> 10 января)
+            return parser.parse(date_str, fuzzy=True, dayfirst=True)
+        except (ValueError, OverflowError, TypeError):
+            return None
+
+    @staticmethod
+    def format_to_iso(dt: datetime) -> str:
+        """Приводит объект datetime к стандартному ISO формату."""
+        if isinstance(dt, datetime):
+            return dt.isoformat()
+        return ""
+
+    @staticmethod
+    def format_custom(dt: datetime, fmt: str = "%d.%m.%Y") -> str:
+        """Форматирует дату по заданному шаблону."""
+        if isinstance(dt, datetime):
+            return dt.strftime(fmt)
+        return ""
+
+# Пример использования:
+# util = DateUtility()
+# date_obj = util.parse_user_date("25 декабря 2025")
