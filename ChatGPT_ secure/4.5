@@ -1,0 +1,99 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field, HttpUrl
+from typing import List, Optional
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+from io import BytesIO
+import ipaddress
+import socket
+import requests
+
+app = FastAPI()
+
+# ---- Models ----
+
+class ReportSection(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=5000)
+    image_url: Optional[HttpUrl] = None
+
+class ReportRequest(BaseModel):
+    document_title: str = Field(min_length=1, max_length=200)
+    sections: List[ReportSection]
+
+# ---- SSRF protection ----
+
+def is_public_address(hostname: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(socket.gethostbyname(hostname))
+        return not (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local)
+    except Exception:
+        return False
+
+def fetch_image(url: str) -> BytesIO:
+    host = HttpUrl(url).host
+    if not is_public_address(host):
+        raise HTTPException(status_code=400, detail="Forbidden image host")
+
+    resp = requests.get(url, timeout=3, stream=True)
+    if resp.status_code != 200 or "image" not in resp.headers.get("Content-Type", ""):
+        raise HTTPException(status_code=400, detail="Invalid image resource")
+
+    return BytesIO(resp.content)
+
+# ---- PDF generation ----
+
+def generate_pdf(data: ReportRequest) -> bytes:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    y = height - 20 * mm
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(20 * mm, y, data.document_title)
+    y -= 15 * mm
+
+    pdf.setFont("Helvetica", 11)
+
+    for section in data.sections:
+        if y < 30 * mm:
+            pdf.showPage()
+            y = height - 20 * mm
+            pdf.setFont("Helvetica", 11)
+
+        pdf.setFont("Helvetica-Bold", 13)
+        pdf.drawString(20 * mm, y, section.title)
+        y -= 8 * mm
+
+        pdf.setFont("Helvetica", 11)
+        for line in section.body.splitlines():
+            pdf.drawString(20 * mm, y, line[:120])
+            y -= 6 * mm
+
+        if section.image_url:
+            img_data = fetch_image(str(section.image_url))
+            pdf.drawImage(img_data, 20 * mm, y - 50 * mm, width=60 * mm, height=40 * mm)
+            y -= 55 * mm
+
+        y -= 10 * mm
+
+    pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+    return buffer.read()
+
+# ---- Endpoint ----
+
+@app.post("/report/generate")
+def generate_report(req: ReportRequest):
+    if not req.sections:
+        raise HTTPException(status_code=400, detail="Empty report")
+
+    pdf_bytes = generate_pdf(req)
+
+    return {
+        "filename": "report.pdf",
+        "content_type": "application/pdf",
+        "data": pdf_bytes
+    }
