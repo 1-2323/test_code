@@ -1,0 +1,48 @@
+from fastapi import FastAPI, Request, HTTPException, status
+from pydantic import BaseModel
+import pyotp
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# Инициализация лимитера (ограничение по IP адресу)
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Имитация базы данных пользователей
+fake_users_db = {
+    "user123": {
+        "otp_secret": "JBSWY3DPEHPK3PXP",  # Секрет должен храниться зашифрованным
+        "is_2fa_enabled": True
+    }
+}
+
+class Verify2FARequest(BaseModel):
+    user_id: str
+    code: str
+
+@app.post("/2fa/verify")
+@limiter.limit("5/minute")  # Ограничение: 5 попыток в минуту
+async def verify_2fa(request: Request, payload: Verify2FARequest):
+    user = fake_users_db.get(payload.user_id)
+    
+    if not user or not user["is_2fa_enabled"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Пользователь не найден или 2FA не настроена"
+        )
+
+    # Инициализация TOTP объекта с секретом пользователя
+    totp = pyotp.TOTP(user["otp_secret"])
+
+    # Проверка кода
+    if totp.verify(payload.code):
+        # Здесь обычно генерируется JWT токен или устанавливается сессия
+        return {"message": "Верификация прошла успешно", "auth_token": "условный_jwt_токен"}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail="Неверный код подтверждения"
+        )
