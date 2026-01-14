@@ -1,0 +1,18 @@
+from typing import Any, Dict
+
+from fastapi import APIRouter, Body, Depends
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from db import get_mongo_db
+
+router = APIRouter(tags=["documents"])
+
+
+@router.get("/documents/search")
+async def search_documents(
+    criteria: Dict[str, Any] = Body(...),
+    db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+):
+    cursor = db.documents.find(criteria)
+    documents = await cursor.to_list(length=100)
+    return {"items": documents}
