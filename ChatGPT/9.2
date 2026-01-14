@@ -1,0 +1,68 @@
+import asyncio
+import logging
+import os
+import time
+from typing import Iterable
+
+import aiohttp
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+
+CHECK_INTERVAL = int(os.getenv("HEALTHCHECK_INTERVAL", "30"))
+DB_DSN = os.getenv("DB_DSN")  # e.g. postgresql+asyncpg://user:pass@host/db
+EXTERNAL_URLS = tuple(
+    url for url in os.getenv("EXTERNAL_URLS", "").split(",") if url
+)
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "5"))
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
+
+async def check_database(engine) -> None:
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
+async def check_external_services(session: aiohttp.ClientSession, urls: Iterable[str]) -> None:
+    async def _check(url: str) -> None:
+        async with session.get(url) as resp:
+            if resp.status >= 400:
+                raise RuntimeError(f"{url} returned status {resp.status}")
+
+    await asyncio.gather(*(_check(url) for url in urls))
+
+
+async def healthcheck_loop() -> None:
+    engine = create_async_engine(DB_DSN, pool_pre_ping=True)
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            while True:
+                start = time.monotonic()
+                try:
+                    if DB_DSN:
+                        await check_database(engine)
+                    if EXTERNAL_URLS:
+                        await check_external_services(session, EXTERNAL_URLS)
+                    logging.info("Healthcheck OK")
+                except Exception:
+                    logging.exception("Healthcheck FAILED")
+
+                elapsed = time.monotonic() - start
+                await asyncio.sleep(max(0, CHECK_INTERVAL - elapsed))
+        finally:
+            await engine.dispose()
+
+
+def main() -> None:
+    asyncio.run(healthcheck_loop())
+
+
+if __name__ == "__main__":
+    main()
