@@ -1,0 +1,38 @@
+from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel, Field
+import pyotp
+import time
+
+app = FastAPI()
+
+# user -> {"totp_secret": str}
+USERS: dict[str, dict] = {}
+
+# session_id -> {"user": str, "expires": float, "2fa_pending": bool}
+SESSIONS: dict[str, dict] = {}
+
+
+class TwoFAVerifyRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6, regex=r"^\d{6}$")
+
+
+@app.post("/2fa/verify")
+def verify_2fa(data: TwoFAVerifyRequest, request: Request):
+    session_id = getattr(request.state, "session_id", None)
+    session = SESSIONS.get(session_id)
+
+    if not session or not session.get("2fa_pending"):
+        raise HTTPException(status_code=401, detail="2FA not pending")
+
+    user = USERS.get(session["user"])
+    if not user or "totp_secret" not in user:
+        raise HTTPException(status_code=400, detail="2FA not configured")
+
+    totp = pyotp.TOTP(user["totp_secret"])
+    if not totp.verify(data.code, valid_window=1):
+        raise HTTPException(status_code=401, detail="Invalid code")
+
+    session["2fa_pending"] = False
+    session["expires"] = time.time() + 60 * 60
+
+    return {"status": "ok"}
