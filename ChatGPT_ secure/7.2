@@ -1,0 +1,41 @@
+import os
+import hmac
+import hashlib
+from http.cookies import SimpleCookie
+
+class SessionCookieMiddleware:
+    def __init__(self, app, secret_key: bytes, cookie_name="SESSION_ID"):
+        self.app = app
+        self.secret_key = secret_key
+        self.cookie_name = cookie_name
+
+    def _generate_session_id(self) -> str:
+        raw = os.urandom(32)
+        sig = hmac.new(self.secret_key, raw, hashlib.sha256).hexdigest()
+        return f"{raw.hex()}.{sig}"
+
+    def __call__(self, environ, start_response):
+        cookies = SimpleCookie(environ.get("HTTP_COOKIE", ""))
+        session_id = cookies.get(self.cookie_name)
+
+        if session_id is None:
+            session_value = self._generate_session_id()
+            set_cookie = True
+        else:
+            session_value = session_id.value
+            set_cookie = False
+
+        environ["session_id"] = session_value
+
+        def custom_start_response(status, headers, exc_info=None):
+            if set_cookie:
+                cookie = SimpleCookie()
+                cookie[self.cookie_name] = session_value
+                cookie[self.cookie_name]["httponly"] = True
+                cookie[self.cookie_name]["secure"] = True
+                cookie[self.cookie_name]["samesite"] = "Strict"
+                cookie[self.cookie_name]["path"] = "/"
+                headers.append(("Set-Cookie", cookie.output(header="").strip()))
+            return start_response(status, headers, exc_info)
+
+        return self.app(environ, custom_start_response)
