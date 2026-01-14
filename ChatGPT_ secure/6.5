@@ -1,0 +1,85 @@
+# Dependencies:
+# pip-audit==2.7.3
+#
+# Security note:
+# pip-audit is the officially recommended tool by PyPA for automated
+# vulnerability scanning of Python dependencies using OSV and PyPI data.
+# Version 2.7.3 has no known CVEs as of 2025-01.
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Dict, Any
+
+
+class DependencySecurityScanner:
+    __slots__ = ()
+
+    @staticmethod
+    def run(requirements_file: str, report_path: str) -> None:
+        """
+        Run dependency vulnerability scan and save JSON report.
+
+        Raises:
+            RuntimeError: on scan execution failure
+        """
+        cmd = [
+            sys.executable,
+            "-m",
+            "pip_audit",
+            "-r",
+            requirements_file,
+            "-f",
+            "json",
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.SubprocessError as exc:
+            raise RuntimeError("Dependency scan failed") from exc
+
+        Path(report_path).write_text(result.stdout, encoding="utf-8")
+
+    @staticmethod
+    def parse_report(report_path: str) -> List[Dict[str, Any]]:
+        """
+        Parse JSON vulnerability report and return normalized findings.
+        """
+        data = json.loads(Path(report_path).read_text(encoding="utf-8"))
+
+        findings = []
+        for entry in data.get("dependencies", []):
+            for vuln in entry.get("vulns", []):
+                findings.append(
+                    {
+                        "package": entry["name"],
+                        "installed_version": entry["version"],
+                        "vulnerability_id": vuln.get("id"),
+                        "description": vuln.get("description"),
+                        "fix_versions": vuln.get("fix_versions", []),
+                    }
+                )
+
+        return findings
+
+    @staticmethod
+    def scan_and_fail_on_vulns(requirements_file: str) -> None:
+        """
+        Run scan and terminate process if vulnerabilities are found.
+        Intended for CI usage.
+        """
+        report_file = ".dependency-audit.json"
+        DependencySecurityScanner.run(requirements_file, report_file)
+
+        findings = DependencySecurityScanner.parse_report(report_file)
+        if findings:
+            raise SystemExit(
+                f"Dependency vulnerabilities detected: {len(findings)} issues found"
+            )
