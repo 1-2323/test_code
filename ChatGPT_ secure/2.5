@@ -1,0 +1,48 @@
+# main.py
+from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel, constr
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+
+from models import Base, SensitiveProfile
+from crypto import encrypt_sensitive, KEY_ID
+
+DATABASE_URL = "sqlite:///./app.db"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine)
+
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class SaveSensitiveIn(BaseModel):
+    user_id: int
+    card_number: constr(min_length=12, max_length=19)  # пример валидации
+
+@app.post("/profile/save-sensitive")
+def save_sensitive(payload: SaveSensitiveIn, db: Session = Depends(get_db)):
+    try:
+        aad = str(payload.user_id).encode()  # AAD
+        nonce, ciphertext = encrypt_sensitive(
+            plaintext=payload.card_number.encode(),
+            aad=aad
+        )
+
+        row = SensitiveProfile(
+            user_id=payload.user_id,
+            key_id=KEY_ID,
+            nonce=nonce,
+            ciphertext=ciphertext
+        )
+        db.add(row)
+        db.commit()
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Encryption or storage failed")
