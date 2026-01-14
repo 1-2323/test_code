@@ -1,0 +1,80 @@
+import httpx
+import logging
+from enum import Enum
+from typing import Optional, Dict, Any
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class PaymentStatus(Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    PENDING = "pending"
+    ERROR = "error"
+
+class PaymentGatewayClient:
+    def __init__(self, api_url: str, api_key: str, timeout_seconds: float = 10.0):
+        self.api_url = api_url
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        # Настройка таймаута: общее время ожидания
+        self.timeout = httpx.Timeout(timeout_seconds)
+
+    def process_payment(self, amount: float, currency: str, order_id: str) -> Dict[str, Any]:
+        payload = {
+            "amount": amount,
+            "currency": currency,
+            "order_id": order_id
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    f"{self.api_url}/v1/charge",
+                    json=payload,
+                    headers=self.headers
+                )
+                
+                # Проверка на HTTP ошибки (4xx, 5xx)
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                # КРИТИЧЕСКИЙ МОМЕНТ: Считаем успешным ТОЛЬКО при явном подтверждении
+                if data.get("status") == "captured":
+                    logger.info(f"Платеж {order_id} успешно проведен.")
+                    return {"status": PaymentStatus.SUCCESS, "data": data}
+                else:
+                    logger.warning(f"Платеж {order_id} не подтвержден шлюзом: {data}")
+                    return {"status": PaymentStatus.FAILED, "error": "Not captured"}
+
+        except httpx.ConnectTimeout:
+            logger.error(f"Ошибка соединения с API (Timeout) для заказа {order_id}")
+            return {"status": PaymentStatus.ERROR, "error": "Gateway connection timeout"}
+            
+        except httpx.ReadTimeout:
+            logger.error(f"Шлюз не ответил вовремя (Read Timeout) для заказа {order_id}")
+            # Важно: здесь платеж может быть проведен, но мы не получили ответ.
+            # Нужно переводить в статус ожидания или проверять статус позже.
+            return {"status": PaymentStatus.ERROR, "error": "Gateway read timeout"}
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Ошибка API (HTTP {e.response.status_code}) для заказа {order_id}")
+            return {"status": PaymentStatus.FAILED, "error": f"HTTP Error {e.response.status_code}"}
+
+        except Exception as e:
+            logger.error(f"Непредвиденная ошибка при обработке заказа {order_id}: {str(e)}")
+            return {"status": PaymentStatus.ERROR, "error": "Internal client error"}
+
+# --- Пример использования ---
+if __name__ == "__main__":
+    client = PaymentGatewayClient(
+        api_url="https://api.gateway.com", 
+        api_key="sk_test_12345"
+    )
+    
+    result = client.process_payment(100.0, "USD", "ORDER-999")
+    print(f"Результат обработки: {result['status'].value}")
