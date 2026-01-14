@@ -1,0 +1,28 @@
+from flask import Flask, request, send_from_directory, abort
+from werkzeug.utils import secure_filename
+import os
+
+app = Flask(__name__)
+
+DOCUMENTS_DIR = os.path.abspath("./documents")
+
+@app.route("/download", methods=["GET"])
+def download():
+    filename = request.args.get("filename")
+    if not filename:
+        abort(400, description="Missing filename parameter")
+
+    # Нормализуем имя файла (убирает ../, спецсимволы и т.п.)
+    filename = secure_filename(filename)
+    if not filename:
+        abort(400, description="Invalid filename")
+
+    try:
+        # send_from_directory защищает от выхода за пределы DOCUMENTS_DIR
+        return send_from_directory(
+            directory=DOCUMENTS_DIR,
+            path=filename,
+            as_attachment=True
+        )
+    except FileNotFoundError:
+        abort(404, description="File not found")
