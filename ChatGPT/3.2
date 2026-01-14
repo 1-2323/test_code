@@ -1,0 +1,55 @@
+import asyncio
+import shlex
+from typing import List
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, conlist
+
+router = APIRouter(prefix="/admin", tags=["admin-diagnostics"])
+
+
+class DiagnosticsRequest(BaseModel):
+    commands: conlist(str, min_items=1)
+
+
+async def run_command(cmd: str, timeout: int = 5):
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *shlex.split(cmd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout,
+        )
+
+        return {
+            "command": cmd,
+            "return_code": process.returncode,
+            "stdout": stdout.decode().strip(),
+            "stderr": stderr.decode().strip(),
+        }
+    except asyncio.TimeoutError:
+        return {
+            "command": cmd,
+            "return_code": None,
+            "stdout": "",
+            "stderr": "timeout exceeded",
+        }
+    except Exception as e:
+        return {
+            "command": cmd,
+            "return_code": None,
+            "stdout": "",
+            "stderr": str(e),
+        }
+
+
+@router.post("/diagnostics")
+async def diagnostics(payload: DiagnosticsRequest):
+    results = await asyncio.gather(
+        *(run_command(cmd) for cmd in payload.commands)
+    )
+    return {"results": results}
