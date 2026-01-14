@@ -1,0 +1,46 @@
+import time
+import hashlib
+from typing import Callable, Optional
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+from fastapi import HTTPException
+
+SESSION_TTL = 60 * 60
+SESSION_COOKIE = "session_id"
+
+# session_id -> {"user": str, "expires": float, "ip": str, "ua_hash": str}
+SESSIONS: dict[str, dict] = {}
+
+
+def fingerprint(ip: str, user_agent: str) -> str:
+    return hashlib.sha256(f"{ip}:{user_agent}".encode()).hexdigest()
+
+
+class SessionMonitoringMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: Callable):
+        session_id: Optional[str] = request.cookies.get(SESSION_COOKIE)
+        now = time.time()
+
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session")
+
+        session = SESSIONS.get(session_id)
+        if not session or session["expires"] < now:
+            SESSIONS.pop(session_id, None)
+            raise HTTPException(status_code=401, detail="Session expired")
+
+        client_ip = request.client.host if request.client else ""
+        user_agent = request.headers.get("user-agent", "")
+        current_fp = fingerprint(client_ip, user_agent)
+
+        if session["ip"] != client_ip or session["ua_hash"] != current_fp:
+            SESSIONS.pop(session_id, None)
+            raise HTTPException(status_code=401, detail="Session mismatch")
+
+        session["expires"] = now + SESSION_TTL
+
+        request.state.user = session["user"]
+
+        response: Response = await call_next(request)
+        return response
