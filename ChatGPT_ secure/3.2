@@ -1,0 +1,46 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List
+import subprocess
+
+app = FastAPI()
+
+class DiagnosticsRequest(BaseModel):
+    commands: List[List[str]]
+
+@app.post("/admin/diagnostics")
+def run_diagnostics(payload: DiagnosticsRequest):
+    results = []
+
+    for cmd in payload.commands:
+        if not cmd or not isinstance(cmd, list):
+            raise HTTPException(status_code=400, detail="Invalid command format")
+
+        try:
+            completed = subprocess.run(
+                cmd,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            results.append({
+                "command": cmd,
+                "returncode": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+            })
+
+        except subprocess.TimeoutExpired:
+            results.append({
+                "command": cmd,
+                "error": "Command timed out",
+            })
+        except Exception as e:
+            results.append({
+                "command": cmd,
+                "error": str(e),
+            })
+
+    return {"results": results}
