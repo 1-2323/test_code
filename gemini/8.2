@@ -1,0 +1,41 @@
+import json
+import pickle
+import os
+
+class DataDeserializer:
+    """Класс для десериализации данных из форматов JSON и Pickle."""
+
+    @staticmethod
+    def from_json(file_path):
+        """Десериализация из JSON файла."""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    @staticmethod
+    def from_pickle(file_path):
+        """Десериализация из Pickle файла (бинарный формат)."""
+        with open(file_path, 'rb') as f:
+            return pickle.load(f)
+
+    def deserialize(self, file_path, format=None):
+        """
+        Универсальный метод. Если формат не указан, 
+        он определяется по расширению файла.
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Файл {file_path} не найден.")
+
+        # Определяем формат по расширению, если он не задан явно
+        ext = format.lower() if format else os.path.splitext(file_path)[1].lower()
+
+        if ext in ['.json', 'json']:
+            return self.from_json(file_path)
+        elif ext in ['.pickle', '.pkl', 'pickle']:
+            return self.from_pickle(file_path)
+        else:
+            raise ValueError(f"Формат {ext} не поддерживается.")
+
+# --- Пример использования ---
+# deserializer = DataDeserializer()
+# data = deserializer.deserialize('data.json')
+# b_data = deserializer.deserialize('backup.pkl')
