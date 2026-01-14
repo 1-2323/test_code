@@ -1,0 +1,32 @@
+import os
+from flask import Flask
+
+app = Flask(__name__)
+
+ENV = os.getenv("FLASK_ENV", "production").lower()
+
+if ENV == "development":
+    app.config.update(
+        DEBUG=True,
+        TESTING=True,
+        PROPAGATE_EXCEPTIONS=True,
+    )
+else:
+    app.config.update(
+        DEBUG=False,
+        TESTING=False,
+        PROPAGATE_EXCEPTIONS=False,
+    )
+
+
+@app.route("/")
+def index():
+    return "OK"
+
+
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 5000)),
+        debug=app.config["DEBUG"],
+    )
