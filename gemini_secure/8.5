@@ -1,0 +1,49 @@
+import hashlib
+import shutil
+from pathlib import Path
+from fastapi import FastAPI, UploadFile, File, HTTPException
+
+app = FastAPI()
+
+# Папка для хранения загруженных файлов
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+def calculate_hash(file_path: Path) -> str:
+    """Вычисляет SHA-256 хеш файла."""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Читаем по частям, чтобы не перегружать RAM
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...), 
+    expected_hash: str = None  # Опционально передаем хеш для проверки
+):
+    file_path = UPLOAD_DIR / file.filename
+
+    # 1. Сохраняем файл на диск
+    try:
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        throw HTTPException(status_code=500, detail=f"Ошибка при сохранении: {e}")
+    finally:
+        file.file.close()
+
+    # 2. Проверка целостности (если хеш передан)
+    if expected_hash:
+        actual_hash = calculate_hash(file_path)
+        if actual_hash != expected_hash:
+            # Если хеши не совпали, удаляем поврежденный файл
+            file_path.unlink()
+            raise HTTPException(
+                status_code=400, 
+                detail="Целостность нарушена: хеш-суммы не совпадают"
+            )
+        return {"info": "Файл успешно проверен и сохранен", "hash": actual_hash}
+
+    return {"info": f"Файл '{file.filename}' сохранен", "path": str(file_path)}
