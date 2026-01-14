@@ -1,0 +1,20 @@
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+router = APIRouter(tags=["comments"])
+templates = Jinja2Templates(directory="templates")
+
+
+@router.post("/comments", response_class=HTMLResponse)
+async def create_comment(
+    request: Request,
+    text: str = Form(..., min_length=1),
+):
+    return templates.TemplateResponse(
+        "comment.html",
+        {
+            "request": request,
+            "comment": text,
+        },
+    )
