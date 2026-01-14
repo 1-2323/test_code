@@ -1,0 +1,58 @@
+import hashlib
+from flask import Flask, request, session, abort
+
+app = Flask(__name__)
+app.secret_key = 'your_ultra_secure_secret_key'
+
+def get_client_fingerprint():
+    """
+    Создает уникальный хеш на основе данных устройства и IP.
+    """
+    user_agent = request.headers.get('User-Agent', '')
+    ip_address = request.remote_addr
+    # Можно добавить Accept-Language для большей точности
+    accept_lang = request.headers.get('Accept-Language', '')
+    
+    fingerprint_str = f"{user_agent}|{ip_address}|{accept_lang}"
+    return hashlib.sha256(fingerprint_str.encode()).hexdigest()
+
+@app.before_request
+def validate_session():
+    """
+    Проверка каждой входящей просьбы.
+    """
+    # Разрешаем доступ к логину без проверки сессии
+    if request.endpoint == 'login':
+        return
+
+    # Проверяем наличие сессии
+    if 'user_id' in session:
+        current_fp = get_client_fingerprint()
+        stored_fp = session.get('fingerprint')
+
+        # Сравниваем текущий отпечаток с тем, что был при логине
+        if current_fp != stored_fp:
+            # Обнаружено подозрительное изменение (Hijacking attempt)
+            log_suspicious_activity(session.get('user_id'), current_fp, stored_fp)
+            session.clear()
+            abort(403, description="Session anomaly detected. Please log in again.")
+
+def log_suspicious_activity(user_id, new_fp, old_fp):
+    # Здесь должна быть логика записи в БД или систему алертинга
+    print(f"ALERT: Possible hijacking for user {user_id}!")
+    print(f"Old FP: {old_fp} -> New FP: {new_fp}")
+
+@app.route('/login', methods=['POST'])
+def login():
+    # ... (логика проверки пароля) ...
+    session['user_id'] = 123
+    # Сохраняем отпечаток в момент авторизации
+    session['fingerprint'] = get_client_fingerprint()
+    return "Logged in successfully"
+
+@app.route('/secure-data')
+def secure_data():
+    return f"Welcome, user {session['user_id']}. This is protected data."
+
+if __name__ == '__main__':
+    app.run(debug=True)
