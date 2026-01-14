@@ -1,0 +1,47 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict
+
+app = FastAPI()
+
+# Имитация базы данных правильных ответов и порогов
+CORRECT_ANSWERS = {
+    "q1": "A",
+    "q2": "C",
+    "q3": "B"
+}
+PASSING_SCORE = 2  # Проходной порог
+
+class TestSubmission(BaseModel):
+    user_id: int
+    user_answers: Dict[str, str]  # Пример: {"q1": "A", "q2": "B", ...}
+
+@app.post("/test/submit")
+async def submit_test(submission: TestSubmission):
+    # 1. Рассчитываем баллы на сервере
+    score = 0
+    for q_id, answer in submission.user_answers.items():
+        if q_id in CORRECT_ANSWERS and CORRECT_ANSWERS[q_id] == answer:
+            score += 1
+
+    # 2. Проверяем проходной порог
+    is_passed = score >= PASSING_SCORE
+    
+    # 3. Формируем ответ
+    response = {
+        "user_id": submission.user_id,
+        "score": score,
+        "passed": is_passed,
+        "certificate_url": None
+    }
+
+    if is_passed:
+        # Здесь могла бы быть логика генерации PDF или записи в БД
+        response["certificate_url"] = f"https://cdn.test.com/certs/{submission.user_id}_cert.pdf"
+        return response
+    
+    return {
+        "passed": False,
+        "score": score,
+        "message": "К сожалению, вы не набрали достаточно баллов."
+    }
