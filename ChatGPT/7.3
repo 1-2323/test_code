@@ -1,0 +1,39 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from passlib.context import CryptContext
+import time
+
+app = FastAPI()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# token -> {"user": str, "expires": float}
+PASSWORD_RESET_TOKENS: dict[str, dict] = {}
+
+# user -> {"password_hash": str}
+USERS: dict[str, dict] = {}
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str = Field(min_length=32)
+    new_password: str = Field(min_length=8)
+
+
+@app.post("/password-reset/confirm")
+def password_reset_confirm(data: PasswordResetConfirmRequest):
+    token_data = PASSWORD_RESET_TOKENS.get(data.token)
+    now = time.time()
+
+    if not token_data or token_data["expires"] < now:
+        PASSWORD_RESET_TOKENS.pop(data.token, None)
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    user = USERS.get(token_data["user"])
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+
+    user["password_hash"] = pwd_context.hash(data.new_password)
+
+    PASSWORD_RESET_TOKENS.pop(data.token, None)
+
+    return {"status": "ok"}
