@@ -1,0 +1,45 @@
+import logging
+from datetime import datetime
+from typing import Literal
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+app = FastAPI()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
+
+class TransactionLog(BaseModel):
+    transaction_id: str = Field(..., min_length=1)
+    stage: Literal[
+        "created",
+        "validated",
+        "authorized",
+        "captured",
+        "completed",
+        "failed",
+    ]
+    status: Literal["ok", "error"]
+    message: str | None = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+@app.post("/transactions/log")
+async def log_transaction_stage(payload: TransactionLog) -> dict:
+    try:
+        logging.info(
+            "transaction_id=%s stage=%s status=%s message=%s ts=%s",
+            payload.transaction_id,
+            payload.stage,
+            payload.status,
+            payload.message,
+            payload.timestamp.isoformat(),
+        )
+        return {"result": "logged"}
+    except Exception as exc:
+        logging.exception("Transaction logging failed")
+        raise HTTPException(status_code=500, detail="logging_error") from exc
