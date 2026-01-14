@@ -1,0 +1,41 @@
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import Response
+from PIL import Image, ImageFile
+from io import BytesIO
+
+# Защита от image bomb
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024        # 5 MB
+MAX_PIXELS = 20_000_000                   # ~20 MP
+MAX_WIDTH = 4096
+MAX_HEIGHT = 4096
+
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+ImageFile.LOAD_TRUNCATED_IMAGES = False
+
+app = FastAPI()
+
+@app.post("/image/process")
+async def process_image(
+    file: UploadFile = File(...),
+    width: int = 1024,
+    height: int = 1024,
+):
+    if width <= 0 or height <= 0 or width > MAX_WIDTH or height > MAX_HEIGHT:
+        raise HTTPException(status_code=400, detail="Invalid target size")
+
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large")
+
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.verify()  # быстрая проверка структуры
+        with Image.open(BytesIO(data)) as img:
+            img = img.convert("RGB")
+            img.thumbnail((width, height), Image.Resampling.LANCZOS)
+
+            out = BytesIO()
+            img.save(out, format="JPEG", quality=85, optimize=True)
+            return Response(out.getvalue(), media_type="image/jpeg")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or unsafe image")
