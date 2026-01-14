@@ -1,0 +1,53 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict
+
+app = FastAPI()
+
+# Имитация базы данных товаров
+PRODUCTS_DB = {
+    1: {"name": "Ноутбук", "price": 50000},
+    2: {"name": "Мышь", "price": 1500},
+    3: {"name": "Клавиатура", "price": 3000},
+}
+
+class CartItem(BaseModel):
+    product_id: int
+    quantity: int
+
+class CheckoutRequest(BaseModel):
+    items: List[CartItem]
+    total_price: float  # Цена от клиента (для сверки)
+
+@app.post("/checkout")
+async def checkout(order_data: CheckoutRequest):
+    calculated_total = 0
+    
+    # 1. Пересчитываем сумму на сервере
+    for item in order_data.items:
+        product = PRODUCTS_DB.get(item.product_id)
+        
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Товар с id {item.product_id} не найден")
+        
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Количество товара должно быть больше 0")
+            
+        calculated_total += product["price"] * item.quantity
+
+    # 2. Сверяем с ценой клиента
+    if abs(calculated_total - order_data.total_price) > 0.01:
+        # Если цены не совпадают, это может быть попытка махинации или устаревший кэш
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Ошибка валидации цены. Ожидалось: {calculated_total}, получено: {order_data.total_price}"
+        )
+
+    # 3. Логика создания заказа (запись в БД)
+    # create_order_in_db(order_data.items, calculated_total)
+    
+    return {
+        "status": "success",
+        "order_total": calculated_total,
+        "message": "Заказ успешно создан"
+    }
