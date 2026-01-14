@@ -1,0 +1,67 @@
+import os
+import sys
+import getpass
+from passlib.context import CryptContext
+from sqlalchemy import create_engine, Column, String, Boolean
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
+
+engine = create_engine(DATABASE_URL)
+Session = sessionmaker(bind=engine)
+Base = declarative_base()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    username = Column(String, primary_key=True)
+    password_hash = Column(String, nullable=False)
+    force_password_change = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def init_admin():
+    session = Session()
+
+    admin = session.query(User).filter_by(is_admin=True).first()
+    if admin:
+        session.close()
+        return
+
+    username = os.environ.get("ADMIN_USERNAME")
+    password = os.environ.get("ADMIN_PASSWORD")
+
+    if not username:
+        print("Admin username:", file=sys.stderr)
+        username = input().strip()
+
+    if not password:
+        password = getpass.getpass("Admin password: ").strip()
+
+    if not username or not password:
+        raise RuntimeError("Admin credentials are required")
+
+    admin = User(
+        username=username,
+        password_hash=hash_password(password),
+        is_admin=True,
+        force_password_change=True,
+    )
+
+    session.add(admin)
+    session.commit()
+    session.close()
+
+
+if __name__ == "__main__":
+    Base.metadata.create_all(engine)
+    init_admin()
