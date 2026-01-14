@@ -1,0 +1,42 @@
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Integer
+from typing import Any, Dict
+
+DATABASE_URL = "postgresql+asyncpg://user:password@localhost:5432/dbname"
+
+engine = create_async_engine(DATABASE_URL, echo=False)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class ImportedData(Base):
+    __tablename__ = "imported_data"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+async def get_session() -> AsyncSession:
+    async with SessionLocal() as session:
+        yield session
+
+
+app = FastAPI()
+
+
+@app.post("/import")
+async def import_data(data: Dict[str, Any], session: AsyncSession = Depends(get_session)):
+    try:
+        record = ImportedData(payload=data)
+        session.add(record)
+        await session.commit()
+        return {"status": "ok", "id": record.id}
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
