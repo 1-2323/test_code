@@ -1,0 +1,19 @@
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from starlette.requests import Request
+
+app = FastAPI()
+
+templates = Jinja2Templates(directory="templates")
+templates.env.autoescape = True  # гарантированное экранирование
+
+@app.post("/comments", response_class=HTMLResponse)
+def post_comment(request: Request, text: str = Form(...)):
+    return templates.TemplateResponse(
+        "comment.html",
+        {
+            "request": request,
+            "comment": text,
+        }
+    )
