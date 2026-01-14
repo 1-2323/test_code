@@ -1,0 +1,90 @@
+import requests
+from typing import Any, Dict, Optional
+
+
+class SecureApiClient:
+    def __init__(
+        self,
+        base_url: str,
+        api_token: str,
+        ca_bundle_path: Optional[str] = None,
+        timeout: int = 10,
+    ):
+        """
+        :param base_url: Базовый URL API (только https://)
+        :param api_token: Токен авторизации
+        :param ca_bundle_path: Путь к CA bundle (None = системное хранилище)
+        :param timeout: Таймаут запросов в секундах
+        """
+        if not base_url.startswith("https://"):
+            raise ValueError("Допустимы только HTTPS-соединения")
+
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.verify = ca_bundle_path if ca_bundle_path else True
+
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "Authorization": f"Bearer {api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "SecureApiClient/1.0",
+            }
+        )
+
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            response = self.session.request(
+                method=method,
+                url=url,
+                params=params,
+                json=json,
+                timeout=self.timeout,
+                verify=self.verify,  # TLS-верификация включена
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.SSLError as e:
+            raise RuntimeError("Ошибка TLS-сертификата") from e
+
+        except requests.exceptions.Timeout as e:
+            raise RuntimeError("Таймаут запроса к внешнему сервису") from e
+
+        except requests.exceptions.HTTPError as e:
+            raise RuntimeError(
+                f"HTTP ошибка {response.status_code}: {response.text}"
+            ) from e
+
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError("Ошибка сетевого взаимодействия") from e
+
+    def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self._request("GET", endpoint, params=params)
+
+    def post(self, endpoint: str, json: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request("POST", endpoint, json=json)
+
+
+# ===== Пример использования =====
+
+if __name__ == "__main__":
+    client = SecureApiClient(
+        base_url="https://api.example.com",
+        api_token="YOUR_API_TOKEN",
+        # ca_bundle_path="/etc/ssl/certs/ca-bundle.crt",  # при необходимости
+        timeout=10,
+    )
+
+    response = client.get("/v1/status")
+    print(response)
