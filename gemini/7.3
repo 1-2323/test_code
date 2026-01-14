@@ -1,0 +1,29 @@
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
+
+router = APIRouter()
+
+# Схема данных для запроса
+class PasswordConfirmRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=8, description="Новый пароль")
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
+async def confirm_password_reset(data: PasswordConfirmRequest):
+    # 1. Поиск токена в базе данных или проверка JWT
+    user = await get_user_by_reset_token(data.token)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Невалидный или просроченный токен"
+        )
+
+    # 2. Хеширование нового пароля
+    hashed_password = hash_password(data.new_password)
+
+    # 3. Обновление пароля в БД и деактивация токена
+    await update_user_password(user_id=user.id, new_password=hashed_password)
+    await invalidate_token(data.token)
+
+    return {"message": "Пароль успешно изменен"}
