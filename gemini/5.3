@@ -1,0 +1,48 @@
+import os
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.orm import sessionmaker, declarative_base
+from werkzeug.security import generate_password_hash
+
+# 1. Настройка базы данных
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///app.db")
+Base = declarative_base()
+
+# 2. Определение модели Пользователя
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    username = Column(String(50), unique=True, nullable=False)
+    password_hash = Column(String(128), nullable=False)
+    role = Column(String(20), default='user')
+
+# 3. Функция инициализации
+def initialize_admin():
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)  # Создаем таблицы, если их нет
+    
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    # Дефолтные данные
+    ADMIN_USERNAME = "admin"
+    ADMIN_PASSWORD = "SuperSafePassword123" # В реальных проектах брать из ENV
+
+    # Проверка, существует ли уже админ
+    existing_admin = session.query(User).filter_by(username=ADMIN_USERNAME).first()
+    
+    if not existing_admin:
+        new_admin = User(
+            username=ADMIN_USERNAME,
+            password_hash=generate_password_hash(ADMIN_PASSWORD),
+            role="admin"
+        )
+        session.add(new_admin)
+        session.commit()
+        print(f"Успех: Создан администратор '{ADMIN_USERNAME}'.")
+    else:
+        print("Инфо: Администратор уже существует в базе.")
+    
+    session.close()
+
+if __name__ == "__main__":
+    initialize_admin()
