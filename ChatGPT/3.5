@@ -1,0 +1,46 @@
+import logging
+from logging.handlers import RotatingFileHandler
+from typing import Callable
+
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+
+
+logger = logging.getLogger("request_logger")
+logger.setLevel(logging.INFO)
+
+handler = RotatingFileHandler(
+    filename="requests.log",
+    maxBytes=10 * 1024 * 1024,
+    backupCount=5,
+)
+formatter = logging.Formatter(
+    "%(asctime)s %(message)s"
+)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable,
+    ) -> Response:
+        headers = {
+            "user_agent": request.headers.get("user-agent"),
+            "accept": request.headers.get("accept"),
+            "content_type": request.headers.get("content-type"),
+            "host": request.headers.get("host"),
+            "x_forwarded_for": request.headers.get("x-forwarded-for"),
+        }
+
+        logger.info(
+            "method=%s path=%s headers=%s",
+            request.method,
+            request.url.path,
+            headers,
+        )
+
+        return await call_next(request)
