@@ -1,0 +1,48 @@
+import re
+from collections import Counter
+
+# Настройки
+LOG_FILE = 'auth.log'  # Путь к вашему файлу логов
+THRESHOLD = 5          # Порог неудачных входов для фиксации аномалии
+
+def analyze_brute_force(file_path, threshold):
+    # Регулярное выражение для поиска неудачного входа и извлечения IP
+    # Подходит для большинства Linux систем (ssh, pam_unix и т.д.)
+    failed_pattern = re.compile(r"Failed password for .* from (\d+\.\d+\.\d+\.\d+)")
+    
+    failed_attempts = []
+
+    try:
+        with open(file_path, 'r') as file:
+            for line in file:
+                match = failed_pattern.search(line)
+                if match:
+                    ip_address = match.group(1)
+                    failed_attempts.append(ip_address)
+        
+        # Подсчет упоминаний каждого IP
+        stats = Counter(failed_attempts)
+        
+        print(f"{'IP Address':<20} | {'Failed Attempts':<15}")
+        print("-" * 40)
+        
+        found_anomalies = False
+        for ip, count in stats.items():
+            if count >= threshold:
+                print(f"{ip:<20} | {count:<15} [ANOMALY]")
+                found_anomalies = True
+            else:
+                # Опционально: вывод всех, кто не прошел порог
+                # print(f"{ip:<20} | {count:<15}")
+                pass
+        
+        if not found_anomalies:
+            print("Аномалий не обнаружено.")
+
+    except FileNotFoundError:
+        print(f"Ошибка: Файл {file_path} не найден.")
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
+
+if __name__ == "__main__":
+    analyze_brute_force(LOG_FILE, THRESHOLD)
