@@ -1,0 +1,125 @@
+import asyncio
+import logging
+import socket
+from typing import Iterable, Callable, Awaitable
+from contextlib import asynccontextmanager
+
+import aiohttp
+import asyncpg
+
+# --- Alerting ---
+
+logger = logging.getLogger("healthcheck")
+logger.setLevel(logging.WARNING)
+
+
+class AlertSender:
+    """
+    Abstract alert sender.
+    Replace implementation with PagerDuty, OpsGenie, Slack, email, etc.
+    """
+
+    async def send(self, service: str, reason: str) -> None:
+        logger.error(
+            {
+                "alert": "service_unhealthy",
+                "service": service,
+                "reason": reason,
+            }
+        )
+
+
+# --- Health checks ---
+
+async def check_db(dsn: str, timeout: float = 3.0) -> None:
+    conn = await asyncpg.connect(dsn=dsn, timeout=timeout)
+    try:
+        await conn.execute("SELECT 1")
+    finally:
+        await conn.close()
+
+
+async def check_http(url: str, timeout: float = 3.0) -> None:
+    timeout_cfg = aiohttp.ClientTimeout(total=timeout)
+    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+        async with session.get(url) as resp:
+            if resp.status >= 500:
+                raise RuntimeError(f"HTTP {resp.status}")
+
+
+async def check_tcp(host: str, port: int, timeout: float = 3.0) -> None:
+    loop = asyncio.get_running_loop()
+    await asyncio.wait_for(
+        loop.getaddrinfo(host, port, family=socket.AF_UNSPEC),
+        timeout=timeout,
+    )
+
+
+# --- Scheduler ---
+
+class HealthCheckTask:
+    def __init__(
+        self,
+        name: str,
+        check: Callable[[], Awaitable[None]],
+    ):
+        self.name = name
+        self.check = check
+
+
+class HealthMonitor:
+    def __init__(
+        self,
+        tasks: Iterable[HealthCheckTask],
+        alert_sender: AlertSender,
+        interval_seconds: int = 30,
+    ):
+        self.tasks = tasks
+        self.alert_sender = alert_sender
+        self.interval = interval_seconds
+
+    async def run(self) -> None:
+        while True:
+            await asyncio.gather(
+                *(self._run_task(task) for task in self.tasks),
+                return_exceptions=True,
+            )
+            await asyncio.sleep(self.interval)
+
+    async def _run_task(self, task: HealthCheckTask) -> None:
+        try:
+            await task.check()
+        except Exception as exc:
+            await self.alert_sender.send(task.name, str(exc))
+
+
+# --- Entry point ---
+
+async def main() -> None:
+    alert_sender = AlertSender()
+
+    tasks = [
+        HealthCheckTask(
+            "primary_db",
+            lambda: check_db(dsn="postgresql://user:pass@db:5432/app"),
+        ),
+        HealthCheckTask(
+            "payments_api",
+            lambda: check_http("https://payments.example.com/health"),
+        ),
+        HealthCheckTask(
+            "redis_tcp",
+            lambda: check_tcp("redis", 6379),
+        ),
+    ]
+
+    monitor = HealthMonitor(
+        tasks=tasks,
+        alert_sender=alert_sender,
+        interval_seconds=30,
+    )
+    await monitor.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
