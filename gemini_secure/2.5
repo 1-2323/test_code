@@ -1,0 +1,46 @@
+import os
+import base64
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+app = FastAPI()
+
+# В реальном проекте загружайте это из защищенного хранилища (Vault/ENV)
+# Ключ должен быть длиной 32 байта для AES-256
+ENCRYPTION_KEY_HEX = os.getenv("ENCRYPTION_KEY", "6c323030393035313437313431323334353637383930313233343536")
+master_key = bytes.fromhex(ENCRYPTION_KEY_HEX)
+
+class SensitiveData(BaseModel):
+    card_number: str
+
+def encrypt_data(data: str, key: bytes) -> str:
+    aesgcm = AESGCM(key)
+    # Генерируем случайный одноразовый номер (nonce) для каждой операции
+    nonce = os.urandom(12) 
+    ciphertext = aesgcm.encrypt(nonce, data.encode(), None)
+    
+    # Сохраняем nonce вместе с шифротекстом, чтобы иметь возможность расшифровать
+    # Результат кодируем в Base64 для удобства хранения в БД
+    return base64.b64encode(nonce + ciphertext).decode('utf-8')
+
+@app.post("/profile/save-sensitive")
+async def save_sensitive_info(payload: SensitiveData):
+    try:
+        # 1. Шифруем данные
+        encrypted_card = encrypt_data(payload.card_number, master_key)
+        
+        # 2. Имитация сохранения в базу данных
+        # db.execute("INSERT INTO profiles (card_encrypted) VALUES (?)", (encrypted_card,))
+        
+        return {
+            "status": "success",
+            "message": "Data saved securely",
+            "stored_value_preview": encrypted_card  # Только для демонстрации
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Encryption failed")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
