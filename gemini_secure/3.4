@@ -1,0 +1,36 @@
+from fastapi import FastAPI, HTTPException, Body
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field
+from typing import Optional
+
+app = FastAPI()
+db = AsyncIOMotorClient("mongodb://localhost:27017")["my_database"]
+
+# Схема для санитизации: разрешаем поиск только по конкретным полям
+class DocumentSearchSchema(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    author_id: Optional[int] = None
+
+    class Config:
+        # Запрещаем любые поля, не описанные в схеме (защита от $gt, $where и т.д.)
+        extra = "forbid"
+
+@app.get("/documents/search")
+async def search_documents(criteria: DocumentSearchSchema = Body(...)):
+    # Преобразуем модель в словарь, исключая None. 
+    # Теперь query содержит только проверенные пары ключ-значение.
+    query = criteria.model_dump(exclude_none=True)
+    
+    if not query:
+        raise HTTPException(status_code=400, detail="Empty search criteria")
+
+    # Выполняем поиск
+    cursor = db.documents.find(query).limit(100)
+    results = await cursor.to_list(length=100)
+    
+    # Приводим ObjectId к строке для JSON-ответа
+    for doc in results:
+        doc["_id"] = str(doc["_id"])
+        
+    return {"results": results}
