@@ -1,0 +1,26 @@
+import requests
+from typing import Optional
+
+
+class LicenseError(Exception):
+    pass
+
+
+def check_license(
+    license_key: str,
+    server_url: str,
+    timeout: float = 5.0,
+) -> bool:
+    """
+    Проверяет лицензию через внешний сервер.
+
+    Ожидаемый ответ сервера (JSON):
+    {
+        "valid": true | false,
+        "reason": "optional string"
+    }
+    """
+    try:
+        response = requests.post(
+            server_url,
+            json={"l
