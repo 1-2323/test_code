@@ -1,0 +1,67 @@
+import os
+import base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+class SecretManager:
+    def __init__(self):
+        # Получаем мастер-ключ из переменной окружения
+        self.master_key = os.getenv("APP_MASTER_KEY")
+        if not self.master_key:
+            raise EnvironmentError("Переменная окружения 'APP_MASTER_KEY' не установлена!")
+        
+        # Подготавливаем ключ (превращаем строку в 32-байтный ключ для AES-256)
+        self._key = self._derive_key(self.master_key)
+
+    def _derive_key(self, password: str) -> bytes:
+        """Детерминированное создание ключа из пароля (хэширование)"""
+        password_bytes = password.encode()
+        # Используем статический заголовок (salt). 
+        # В идеале salt должен быть уникальным, но для ключа из ENV он должен быть фиксированным.
+        salt = b'static_salt_for_env_key' 
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        return kdf.derive(password_bytes)
+
+    def encrypt(self, plaintext: str) -> str:
+        """Шифрует строку и возвращает base64 строку, содержащую IV + ciphertext + tag"""
+        aesgcm = AESGCM(self._key)
+        nonce = os.urandom(12)  # Рекомендуемый размер IV для GCM — 12 байт
+        
+        ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
+        
+        # Сохраняем nonce вместе с шифротекстом для дешифровки
+        return base64.b64encode(nonce + ciphertext).decode('utf-8')
+
+    def decrypt(self, encrypted_data: str) -> str:
+        """Дешифрует данные, полученные из метода encrypt"""
+        data = base64.b64decode(encrypted_data)
+        nonce = data[:12]
+        ciphertext = data[12:]
+        
+        aesgcm = AESGCM(self._key)
+        decrypted_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+        
+        return decrypted_bytes.decode('utf-8')
+
+# --- Пример использования ---
+if __name__ == "__main__":
+    # Симуляция переменной окружения (в реальности установите её в системе)
+    os.environ["APP_MASTER_KEY"] = "my-super-secure-password-123"
+
+    manager = SecretManager()
+    
+    api_key = "sk-1234567890abcdef"
+    
+    # Шифрование
+    encrypted = manager.encrypt(api_key)
+    print(f"Зашифрованный ключ: {encrypted}")
+    
+    # Дешифрование
+    decrypted = manager.decrypt(encrypted)
+    print(f"Исходный ключ: {decrypted}")
