@@ -1,0 +1,32 @@
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, EmailStr
+from passlib.context import CryptContext
+
+app = FastAPI()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Модели данных
+class RecoveryRequest(BaseModel):
+    email: EmailStr
+    verification_code: str  # Код из почты/SMS вместо секретного вопроса
+    new_password: str
+
+# Эндпоинт восстановления
+@app.post("/recover", status_code=status.HTTP_200_OK)
+async def recover_password(request: RecoveryRequest):
+    # 1. Поиск пользователя в БД
+    user = await get_user_by_email(request.email)
+    if not user:
+        # Защита от перебора: возвращаем общую ошибку
+        raise HTTPException(status_code=400, detail="Invalid request")
+
+    # 2. Проверка MFA (CWE-640: используем надежный метод вместо вопросов)
+    is_valid = verify_mfa_code(user, request.verification_code)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+
+    # 3. Хеширование и сохранение нового пароля
+    hashed_password = pwd_context.hash(request.new_password)
+    await update_user_password(user.id, hashed_password)
+
+    return {"message": "Password reset successfully. Please log in with your new password."}
