@@ -1,0 +1,45 @@
+from lxml import etree
+
+def process_large_xml(file_path, target_tag):
+    """
+    Безопасный итеративный парсинг больших XML-файлов.
+    
+    :param file_path: Путь к XML-файлу
+    :param target_tag: Имя тега, который нужно обработать
+    """
+    # 1. Настройка безопасного парсера
+    parser = etree.XMLParser(
+        resolve_entities=False,   # Защита от Billion Laughs
+        no_network=True,          # Защита от XXE (запрет сетевых запросов)
+        dtd_validation=False,     # Отключение валидации DTD
+        remove_comments=True      # Экономия памяти
+    )
+
+    try:
+        # 2. Используем iterparse для потоковой обработки
+        # 'end' означает, что мы ловим событие закрытия тега (когда данные уже считаны)
+        context = etree.iterparse(file_path, events=('end',), tag=target_tag, parser=parser)
+
+        for event, elem in context:
+            # Здесь логика обработки вашего отчета
+            yield_data(elem)
+
+            # 3. ОЧИСТКА ПАМЯТИ (критично для больших файлов)
+            elem.clear()
+            # Очищаем ссылки на предков, чтобы дерево не копилось в памяти
+            while elem.getparent() is not None:
+                del elem.getparent()[0]
+                
+    except etree.XMLSyntaxError as e:
+        print(f"Ошибка синтаксиса или попытка атаки: {e}")
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
+
+def yield_data(elem):
+    """Пример обработки отдельного узла."""
+    # Пример: выводим текст или атрибуты
+    print(f"Обработан элемент: {elem.tag}, данные: {elem.text}")
+
+# Пример вызова:
+# for data in process_large_xml('huge_report.xml', 'report_row'):
+#     pass
