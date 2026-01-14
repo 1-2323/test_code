@@ -1,0 +1,65 @@
+import os
+import base64
+from secrets import token_bytes
+
+from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel, constr
+from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+DATABASE_URL = "sqlite:///./app.db"
+SECRET_KEY_ENV = "DATA_ENCRYPTION_KEY"
+
+key = os.getenv(SECRET_KEY_ENV)
+if not key:
+    raise RuntimeError("Encryption key not found in environment")
+
+aes_key = key.encode().ljust(32, b"\0")[:32]
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+Base = declarative_base()
+app = FastAPI()
+
+
+class SensitiveData(Base):
+    __tablename__ = "sensitive_data"
+
+    id = Column(Integer, primary_key=True)
+    encrypted_value = Column(String, nullable=False)
+
+
+Base.metadata.create_all(bind=engine)
+
+
+class SaveSensitiveRequest(BaseModel):
+    value: constr(min_length=4)
+
+
+def get_db() -> Session:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def encrypt(value: str) -> str:
+    aesgcm = AESGCM(aes_key)
+    nonce = token_bytes(12)
+    encrypted = aesgcm.encrypt(nonce, value.encode(), None)
+    return base64.b64encode(nonce + encrypted).decode()
+
+
+@app.post("/profile/save-sensitive", status_code=201)
+def save_sensitive(
+    data: SaveSensitiveRequest,
+    db: Session = Depends(get_db),
+):
+    encrypted_value = encrypt(data.value)
+    record = SensitiveData(encrypted_value=encrypted_value)
+    db.add(record)
+    db.commit()
+    return {"id": record.id}
