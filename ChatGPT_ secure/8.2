@@ -1,0 +1,17 @@
+import json
+from typing import Any
+
+
+class SafeDeserializer:
+    __slots__ = ()
+
+    @staticmethod
+    def deserialize(data: bytes, fmt: str) -> Any:
+        if fmt == "json":
+            return json.loads(data.decode("utf-8"))
+
+        if fmt == "pickle":
+            # Явно запрещаем небезопасный формат (CWE-502)
+            raise ValueError("Deserialization of pickle format is not allowed")
+
+        raise ValueError(f"Unsupported format: {fmt}")
