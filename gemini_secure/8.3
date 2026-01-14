@@ -1,0 +1,53 @@
+import base64
+from fastapi import FastAPI, HTTPException, Header, Request
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import serialization
+from cryptography.exceptions import InvalidSignature
+
+app = FastAPI()
+
+# В реальности загрузите ключ из переменной окружения или файла
+# Это ПУБЛИЧНЫЙ ключ отправителя (внешнего источника)
+PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
+... (ваш ключ здесь) ...
+-----END PUBLIC KEY-----"""
+
+def verify_signature(data: bytes, signature_base64: str):
+    """Проверяет цифровую подпись данных."""
+    try:
+        public_key = serialization.load_pem_public_key(PUBLIC_KEY_PEM)
+        signature = base64.b64decode(signature_base64)
+        
+        public_key.verify(
+            signature,
+            data,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+    except (InvalidSignature, ValueError, TypeError):
+        return False
+
+@app.post("/update")
+async def update_config(request: Request, x_signature: str = Header(None)):
+    if not x_signature:
+        raise HTTPException(status_code=401, detail="Отсутствует подпись (X-Signature)")
+
+    # Получаем сырые байты тела запроса для проверки подписи
+    body = await request.body()
+    
+    # 1. Верификация
+    if not verify_signature(body, x_signature):
+        raise HTTPException(status_code=403, detail="Неверная цифровая подпись")
+
+    # 2. Применение конфигурации
+    config_data = await request.json()
+    
+    # Здесь логика сохранения/применения конфига
+    print(f"Конфигурация успешно обновлена: {config_data}")
+    
+    return {"status": "success", "message": "Configuration applied"}
