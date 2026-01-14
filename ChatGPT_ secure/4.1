@@ -1,0 +1,52 @@
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel, Field
+from passlib.context import CryptContext
+import pyotp
+import time
+
+app = FastAPI()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ---- Models ----
+
+class RecoverRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    mfa_code: str = Field(min_length=6, max_length=8)
+    new_password: str = Field(min_length=12, max_length=128)
+
+# ---- Storage stubs (replace with real DB access) ----
+
+def get_user(username: str):
+    # Expected fields: password_hash, mfa_secret, is_active
+    return {
+        "password_hash": "$2b$12$example",
+        "mfa_secret": "JBSWY3DPEHPK3PXP",
+        "is_active": True,
+    }
+
+def update_password(username: str, password_hash: str):
+    pass
+
+# ---- Security helpers ----
+
+def verify_mfa(mfa_secret: str, code: str) -> bool:
+    totp = pyotp.TOTP(mfa_secret)
+    return totp.verify(code, valid_window=1)
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+# ---- Endpoint ----
+
+@app.post("/recover", status_code=204)
+def recover(req: RecoverRequest):
+    user = get_user(req.username)
+    if not user or not user["is_active"]:
+        raise HTTPException(status_code=400, detail="Invalid recovery request")
+
+    if not verify_mfa(user["mfa_secret"], req.mfa_code):
+        raise HTTPException(status_code=401, detail="Invalid MFA code")
+
+    new_hash = hash_password(req.new_password)
+    update_password(req.username, new_hash)
+    return None
