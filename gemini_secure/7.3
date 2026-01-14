@@ -1,0 +1,47 @@
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
+from passlib.context import CryptContext
+
+app = FastAPI()
+
+# Настройки безопасности
+SECRET_KEY = "your-super-secret-key"  # Хранить в .env!
+SECURITY_SALT = "password-reset-salt"
+token_serializer = URLSafeTimedSerializer(SECRET_KEY)
+
+# Настройка хеширования паролей
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Модель данных для запроса
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=8)
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+@app.post("/password-reset/confirm")
+async def confirm_password_reset(data: PasswordResetConfirm):
+    try:
+        # 1. Проверка токена и его срока жизни (max_age в секундах)
+        # Устанавливаем срок жизни 3600 секунд (1 час)
+        email = token_serializer.loads(
+            data.token, 
+            salt=SECURITY_SALT, 
+            max_age=3600
+        )
+    except SignatureExpired:
+        raise HTTPException(status_code=400, detail="Срок действия токена истек.")
+    except BadSignature:
+        raise HTTPException(status_code=400, detail="Неверный токен.")
+
+    # 2. Логика обновления пароля в БД
+    hashed_pwd = hash_password(data.new_password)
+    
+    # Здесь должен быть ваш код для поиска пользователя по email 
+    # и сохранения hashed_pwd в базу данных.
+    # user = db.get_user(email=email)
+    # user.update_password(hashed_pwd)
+
+    return {"message": "Пароль успешно обновлен."}
