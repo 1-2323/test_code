@@ -1,0 +1,37 @@
+from typing import Callable
+from defusedxml import ElementTree as ET
+
+class XMLProcessingError(Exception):
+    pass
+
+def process_large_xml(
+    fileobj,
+    on_element: Callable[[ET.Element], None],
+    max_bytes: int = 50 * 1024 * 1024,
+) -> None:
+    """
+    Безопасно обрабатывает большой XML-файл.
+    Защита от XXE и Billion Laughs обеспечивается defusedxml.
+    Обработка потоковая, без загрузки всего файла в память.
+
+    :param fileobj: файловый объект (binary)
+    :param on_element: callback для обработки элементов
+    :param max_bytes: жесткий лимит размера входных данных
+    :raises XMLProcessingError: при ошибках парсинга или ограничений
+    """
+    read = 0
+
+    def limited_read(size: int = -1) -> bytes:
+        nonlocal read
+        chunk = fileobj.read(size)
+        read += len(chunk)
+        if read > max_bytes:
+            raise XMLProcessingError("XML file too large")
+        return chunk
+
+    try:
+        for _, elem in ET.iterparse(limited_read, events=("end",)):
+            on_element(elem)
+            elem.clear()
+    except Exception as e:
+        raise XMLProcessingError("Unsafe or invalid XML") from e
