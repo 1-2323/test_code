@@ -1,0 +1,56 @@
+import os
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from PIL import Image
+import shutil
+from pathlib import Path
+
+app = FastAPI()
+
+# Конфигурация
+UPLOAD_DIR = Path("uploads/avatars")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+ALLOWED_EXTENSIONS = {"image/jpeg", "image/png", "image/jpg"}
+AVATAR_SIZE = (300, 300)
+
+@app.post("/profile/avatar")
+async def upload_avatar(file: UploadFile = File(...)):
+    # 1. Валидация типа файла
+    if file.content_type not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Недопустимый формат файла. Используйте JPG или PNG.")
+
+    # 2. Валидация размера файла
+    # Проверяем размер через указатель (seek)
+    file.file.seek(0, os.SEEK_END)
+    file_size = file.file.tell()
+    file.file.seek(0)  # Возвращаем указатель в начало
+
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="Файл слишком большой. Максимум 5 МБ.")
+
+    try:
+        # 3. Обработка изображения (Resize)
+        img = Image.open(file.file)
+        
+        # Используем thumbnail для сохранения пропорций
+        img.thumbnail(AVATAR_SIZE)
+        
+        # Формируем путь сохранения
+        file_path = UPLOAD_DIR / f"user_{file.filename}"
+        
+        # 4. Сохранение
+        # Если оригинальный файл был RGBA (PNG), конвертируем в RGB для сохранения в JPEG (опционально)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        img.save(file_path, "JPEG", quality=85)
+
+        return {
+            "message": "Аватар успешно обновлен",
+            "filename": file_path.name,
+            "size": f"{AVATAR_SIZE[0]}x{AVATAR_SIZE[1]}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при обработке изображения: {str(e)}")
