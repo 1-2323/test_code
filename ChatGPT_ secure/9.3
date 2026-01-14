@@ -1,0 +1,80 @@
+import logging
+from enum import Enum
+from typing import Optional
+
+from fastapi import FastAPI, Request, HTTPException
+from pydantic import BaseModel, Field
+
+# --- Logging setup ---
+
+logger = logging.getLogger("payments.audit")
+logger.setLevel(logging.INFO)
+
+SENSITIVE_FIELDS = {
+    "pan",
+    "card_number",
+    "cvv",
+    "cvc",
+    "expiry",
+}
+
+
+def sanitize(data: dict) -> dict:
+    """
+    Remove or mask PCI-sensitive fields (PCI DSS).
+    """
+    sanitized = {}
+    for k, v in data.items():
+        if k.lower() in SENSITIVE_FIELDS:
+            sanitized[k] = "***"
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
+# --- Domain models ---
+
+class TransactionStage(str, Enum):
+    initiated = "initiated"
+    authorized = "authorized"
+    captured = "captured"
+    failed = "failed"
+    refunded = "refunded"
+
+
+class TransactionLog(BaseModel):
+    transaction_id: str
+    stage: TransactionStage
+    amount: int = Field(..., gt=0)
+    currency: str
+    merchant_id: str
+    card_pan: Optional[str] = Field(None, exclude=True)
+    card_cvv: Optional[str] = Field(None, exclude=True)
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+# --- App / Endpoint ---
+
+app = FastAPI()
+
+
+@app.post("/payments/transaction/log")
+async def log_transaction(
+    payload: TransactionLog,
+    request: Request,
+):
+    log_record = {
+        "event": "payment.transaction",
+        "transaction_id": payload.transaction_id,
+        "stage": payload.stage,
+        "client_ip": request.client.host if request.client else None,
+        "data": sanitize(payload.dict(exclude_unset=True)),
+    }
+
+    if payload.stage == TransactionStage.failed:
+        logger.warning(log_record)
+    else:
+        logger.info(log_record)
+
+    return {"status": "ok"}
