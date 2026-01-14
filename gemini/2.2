@@ -1,0 +1,53 @@
+import os
+from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class SecretManager:
+    """
+    Класс для безопасного шифрования и дешифрования API-ключей.
+    Использует алгоритм AES через реализацию Fernet.
+    """
+
+    def __init__(self):
+        # Ключ должен быть строкой base64 длиной 32 байта
+        self.__key = os.getenv("ENCRYPTION_KEY")
+        if not self.__key:
+            raise ValueError("Переменная окружения ENCRYPTION_KEY не установлена")
+        
+        try:
+            self.__cipher = Fernet(self.__key.encode())
+        except Exception as e:
+            raise ValueError(f"Некорректный ключ шифрования: {e}")
+
+    def encrypt_secret(self, secret: str) -> str:
+        """
+        Шифрует строку и возвращает зашифрованный токен в виде строки.
+        """
+        if not secret:
+            raise ValueError("Секрет не может быть пустым")
+        
+        encrypted_data = self.__cipher.encrypt(secret.encode())
+        return encrypted_data.decode()
+
+    def decrypt_secret(self, encrypted_token: str) -> str:
+        """
+        Дешифрует токен и возвращает исходную строку.
+        """
+        if not encrypted_token:
+            raise ValueError("Токен для дешифрования не может быть пустым")
+            
+        try:
+            decrypted_data = self.__cipher.decrypt(encrypted_token.encode())
+            return decrypted_data.decode()
+        except Exception as e:
+            # Ошибка может возникнуть при неверном ключе или поврежденных данных
+            raise ValueError(f"Ошибка дешифрования: {e}")
+
+    @staticmethod
+    def generate_key() -> str:
+        """
+        Вспомогательный метод для генерации нового валидного ключа.
+        """
+        return Fernet.generate_key().decode()
