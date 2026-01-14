@@ -1,0 +1,23 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+# Список разрешенных источников (Origins)
+# Можно указать ["*"] для разрешения всех доменов (не рекомендуется для production)
+origins = [
+    "http://localhost:3000",
+    "https://your-frontend-domain.com",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,            # Разрешает запросы с этих доменов
+    allow_credentials=True,           # Разрешает передачу cookies и заголовков авторизации
+    allow_methods=["*"],              # Разрешает все HTTP-методы (GET, POST, PUT и т.д.)
+    allow_headers=["*"],              # Разрешает любые заголовки
+)
+
+@app.get("/")
+async def main():
+    return {"message": "CORS настроен!"}
