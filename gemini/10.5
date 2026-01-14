@@ -1,0 +1,39 @@
+from lxml import etree
+
+def process_large_xml(file_path, target_tag):
+    """
+    Итеративно обрабатывает XML, извлекая данные из указанных тегов.
+    
+    :param file_path: Путь к огромному XML-файлу
+    :param target_tag: Имя тега, который нужно обработать (например, 'report_item')
+    """
+    # 'start' и 'end' — события начала и конца тега
+    context = etree.iterparse(file_path, events=('end',), tag=target_tag)
+    
+    count = 0
+    for event, elem in context:
+        # Здесь логика обработки конкретного элемента
+        process_element(elem)
+        
+        count += 1
+        if count % 1000 == 0:
+            print(f"Обработано объектов: {count}")
+
+        # ВАЖНО: Очищаем элемент и его предков из памяти
+        elem.clear()
+        while elem.getprevious() is not None:
+            del elem.getparent()[0]
+
+    # Удаляем ссылку на контекст для освобождения ресурсов
+    del context
+
+def process_element(elem):
+    """Пример функции для извлечения данных"""
+    # Допустим, мы просто выводим атрибут 'id' или текст
+    item_id = elem.get('id')
+    content = elem.findtext('content')
+    # Здесь можно записывать данные в базу или CSV
+    pass
+
+# Пример вызова:
+# process_large_xml('huge_data.xml', 'row')
