@@ -1,0 +1,55 @@
+import httpx
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, HttpUrl
+from bs4 import BeautifulSoup
+
+router = APIRouter()
+
+class PreviewRequest(BaseModel):
+    url: HttpUrl
+
+class PreviewResponse(BaseModel):
+    url: str
+    title: str | None
+    description: str | None
+
+@router.post("/preview", response_model=PreviewResponse)
+async def get_url_preview(request: PreviewRequest):
+    headers = {
+        "User-Agent": "LinkPreviewBot/1.0 (+https://yourdomain.com/bot)"
+    }
+    
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        try:
+            response = await client.get(str(request.url), headers=headers)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail="Could not fetch the URL")
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid URL or connection error")
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Извлечение заголовка (Title)
+    title = soup.title.string.strip() if soup.title else None
+    if not title:
+        og_title = soup.find("meta", property="og:title")
+        title = og_title["content"].strip() if og_title else None
+
+    # Извлечение описания (Description)
+    description = None
+    # 1. Проверка Open Graph
+    og_desc = soup.find("meta", property="og:description")
+    if og_desc:
+        description = og_desc["content"].strip()
+    
+    # 2. Проверка стандартного мета-тега, если OG пуст
+    if not description:
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        description = meta_desc["content"].strip() if meta_desc else None
+
+    return PreviewResponse(
+        url=str(request.url),
+        title=title,
+        description=description
+    )
