@@ -1,0 +1,45 @@
+from flask import Flask, request, session, jsonify, abort
+import hashlib
+
+app = Flask(__name__)
+app.secret_key = "change-me"
+
+# --- Mock session store (replace with DB/Redis) ---
+session_meta = {
+    # session_id -> {"ip": str, "fingerprint": str}
+}
+
+def _fingerprint(req) -> str:
+    ua = req.headers.get("User-Agent", "")
+    accept = req.headers.get("Accept", "")
+    raw = f"{ua}|{accept}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+@app.before_request
+def session_monitor():
+    session_id = session.get("session_id")
+    user = session.get("user")
+
+    if not session_id or not user:
+        return
+
+    ip = request.remote_addr or "unknown"
+    fp = _fingerprint(request)
+
+    meta = session_meta.get(session_id)
+    if meta is None:
+        session_meta[session_id] = {"ip": ip, "fingerprint": fp}
+        return
+
+    ip_changed = meta["ip"] != ip
+    fp_changed = meta["fingerprint"] != fp
+
+    if ip_changed and fp_changed:
+        session.clear()
+        session_meta.pop(session_id, None)
+        abort(401)
+
+    if ip_changed:
+        meta["ip"] = ip
+    if fp_changed:
+        meta["fingerprint"] = fp
