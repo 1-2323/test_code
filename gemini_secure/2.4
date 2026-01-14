@@ -1,0 +1,51 @@
+import requests
+import os
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+class SecureApiClient:
+    def __init__(self, base_url, api_token, cert_path=None):
+        """
+        :param base_url: Базовый URL API
+        :param api_token: Токен для Bearer авторизации
+        :param cert_path: Путь к файлу .pem с доверенными сертификатами (CA_BUNDLE)
+        """
+        self.base_url = base_url.rstrip('/')
+        self.session = requests.Session()
+        
+        # Настройка заголовков (Авторизация)
+        self.session.headers.update({
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        })
+
+        # CWE-295: Явная настройка проверки сертификатов
+        # Если cert_path не указан, используются системные сертификаты (certifi)
+        if cert_path:
+            if not os.path.exists(cert_path):
+                raise FileNotFoundError(f"Certificate bundle not found at {cert_path}")
+            self.session.verify = cert_path
+        else:
+            self.session.verify = True  # Использовать стандартные доверенные хранилища
+
+        # Дополнительно: Настройка ретраев (повторных попыток) для надежности
+        retries = Retry(total=3, backoff_factor=1, status_forcelcelist=[502, 503, 504])
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
+    def get_data(self, endpoint):
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        try:
+            response = self.session.get(url, timeout=(3.05, 10)) # Connect и Read таймауты
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.SSLError as e:
+            print(f"Критическая ошибка безопасности (SSL): {e}")
+            raise
+        except requests.exceptions.RequestException as e:
+            print(f"Ошибка при выполнении запроса: {e}")
+            raise
+
+# Пример использования:
+# client = SecureApiClient("https://api.service.com", "your_secret_token")
+# data = client.get_data("v1/resource")
