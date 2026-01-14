@@ -1,0 +1,53 @@
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+
+class DependencyScanner:
+    """
+    Runs dependency vulnerability scanning and processes the report.
+    Uses pip-audit with JSON output.
+    """
+
+    def __init__(self, report_path: str | Path = "dependency_report.json"):
+        self.report_path = Path(report_path)
+
+    def run_scan(self) -> None:
+        try:
+            subprocess.run(
+                [
+                    "pip-audit",
+                    "--format",
+                    "json",
+                    "--output",
+                    str(self.report_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("pip-audit is not installed") from exc
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"Dependency scan failed: {exc.stderr.strip()}"
+            ) from exc
+
+    def load_report(self) -> list[dict[str, Any]]:
+        if not self.report_path.exists():
+            raise FileNotFoundError("Scan report not found")
+
+        try:
+            with self.report_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid scan report format") from exc
+
+        if not isinstance(data, list):
+            raise ValueError("Unexpected report structure")
+
+        return data
+
+    def get_critical_issues(self) -> list[dict[str, Any]]:
+        report = se
