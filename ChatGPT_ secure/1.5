@@ -1,0 +1,127 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, AnyHttpUrl
+from urllib.parse import urlparse, urljoin
+import ipaddress
+import socket
+import requests
+from bs4 import BeautifulSoup
+
+app = FastAPI()
+
+# ----- Константы безопасности -----
+MAX_CONTENT_BYTES = 512 * 1024  # 512 KB
+REQUEST_TIMEOUT = 5  # seconds
+MAX_REDIRECTS = 3
+
+BLOCKED_HOSTNAMES = {
+    "metadata.google.internal",
+}
+
+BLOCKED_IPS = {
+    ipaddress.ip_address("169.254.169.254"),  # AWS/Azure metadata
+}
+
+BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+# ----- Models -----
+class PreviewRequest(BaseModel):
+    url: AnyHttpUrl
+
+class PreviewResponse(BaseModel):
+    url: str
+    title: str | None
+    description: str | None
+
+# ----- SSRF protection helpers -----
+def is_ip_blocked(ip: ipaddress._BaseAddress) -> bool:
+    if ip in BLOCKED_IPS:
+        return True
+    return any(ip in net for net in BLOCKED_NETWORKS)
+
+def resolve_and_validate(hostname: str):
+    if hostname in BLOCKED_HOSTNAMES:
+        raise HTTPException(status_code=400, detail="Blocked hostname")
+
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail="DNS resolution failed")
+
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if is_ip_blocked(ip):
+            raise HTTPException(status_code=400, detail="Blocked IP address")
+
+def validate_url(url: str):
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="Invalid URL scheme")
+    resolve_and_validate(parsed.hostname)
+
+# ----- Core logic -----
+def fetch_with_redirects(url: str) -> str:
+    current_url = url
+
+    for _ in range(MAX_REDIRECTS + 1):
+        validate_url(current_url)
+
+        response = requests.get(
+            current_url,
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=False,
+            headers={"User-Agent": "PreviewBot/1.0"},
+            stream=True,
+            proxies={},  # disable system proxies
+        )
+
+        # Handle redirects safely
+        if response.is_redirect:
+            location = response.headers.get("Location")
+            if not location:
+                raise HTTPException(status_code=400, detail="Invalid redirect")
+
+            current_url = urljoin(current_url, location)
+            continue
+
+        # Limit response size
+        content = b""
+        for chunk in response.iter_content(4096):
+            content += chunk
+            if len(content) > MAX_CONTENT_BYTES:
+                raise HTTPException(status_code=400, detail="Response too large")
+
+        return content.decode(errors="ignore")
+
+    raise HTTPException(status_code=400, detail="Too many redirects")
+
+def extract_preview(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+
+    title = soup.title.string.strip() if soup.title and soup.title.string else None
+
+    description = None
+    meta = soup.find("meta", attrs={"name": "description"})
+    if meta and meta.get("content"):
+        description = meta["content"].strip()
+
+    return title, description
+
+# ----- Endpoint -----
+@app.post("/preview", response_model=PreviewResponse)
+def preview(req: PreviewRequest):
+    html = fetch_with_redirects(str(req.url))
+    title, description = extract_preview(html)
+
+    return PreviewResponse(
+        url=str(req.url),
+        title=title,
+        description=description,
+    )
