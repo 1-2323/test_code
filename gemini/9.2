@@ -1,0 +1,71 @@
+import asyncio
+import httpx
+import psycopg2  # Или другой драйвер в зависимости от вашей БД
+from datetime import datetime
+
+# Настройки
+DB_CONFIG = {
+    "dbname": "your_db",
+    "user": "user",
+    "password": "password",
+    "host": "localhost"
+}
+EXTERNAL_SERVICES = [
+    {"name": "Payment Gateway", "url": "https://api.stripe.com/health"},
+    {"name": "Auth Service", "url": "https://auth.example.com/status"}
+]
+CHECK_INTERVAL = 30  # интервал в секундах
+
+async def check_database():
+    """Проверка соединения с БД."""
+    try:
+        # Используем connect как контекстный менеджер для авто-закрытия
+        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=5)
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1;")
+        conn.close()
+        return True, "OK"
+    except Exception as e:
+        return False, str(e)
+
+async def check_external_service(client, service):
+    """Проверка внешнего HTTP сервиса."""
+    try:
+        response = await client.get(service['url'], timeout=5.0)
+        if response.status_code == 200:
+            return True, "OK"
+        return False, f"Status Code: {response.status_code}"
+    except Exception as e:
+        return False, str(e)
+
+async def run_monitoring():
+    """Основной цикл мониторинга."""
+    print(f"[{datetime.now()}] Starting Health Check Monitoring...")
+    
+    async with httpx.AsyncClient() as client:
+        while True:
+            # Запускаем проверки параллельно
+            db_task = check_database()
+            service_tasks = [check_external_service(client, s) for s in EXTERNAL_SERVICES]
+            
+            results = await asyncio.gather(db_task, *service_tasks)
+            
+            # Вывод результатов
+            print(f"\n--- Report {datetime.now().strftime('%H:%M:%S')} ---")
+            
+            # БД
+            db_status, db_msg = results[0]
+            print(f"[DB] {'✅' if db_status else '❌'} {db_msg}")
+            
+            # Сервисы
+            for i, (status, msg) in enumerate(results[1:]):
+                name = EXTERNAL_SERVICES[i]['name']
+                print(f"[{name}] {'✅' if status else '❌'} {msg}")
+                
+            await asyncio.sleep(CHECK_INTERVAL)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_monitoring())
+    except KeyboardInterrupt:
+        print("\nMonitoring stopped by user.")
