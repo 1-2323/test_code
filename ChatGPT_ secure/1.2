@@ -1,0 +1,91 @@
+from fastapi import FastAPI, Depends, HTTPException, status
+from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import Session, declarative_base, relationship
+
+# --------------------
+# База и модели
+# --------------------
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True)
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String)
+    total_price = Column(Integer)
+
+    user = relationship("User")
+
+
+# --------------------
+# Заглушки зависимостей
+# (в реальном проекте уже есть)
+# --------------------
+
+def get_db():
+    """
+    Возвращает SQLAlchemy Session
+    """
+    db = Session()  # пример, у тебя будет реальная сессия
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def get_current_user() -> User:
+    """
+    Возвращает текущего авторизованного пользователя
+    """
+    # В реальности пользователь берётся из JWT / OAuth2
+    return User(id=1, email="user@example.com")
+
+
+# --------------------
+# FastAPI приложение
+# --------------------
+
+app = FastAPI()
+
+
+@app.get("/orders/{order_id}")
+def get_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Возвращает заказ ТОЛЬКО если он принадлежит текущему пользователю
+    (защита от IDOR / CWE-639)
+    """
+
+    order = (
+        db.query(Order)
+        .filter(
+            Order.id == order_id,
+            Order.user_id == current_user.id  # 🔐 КЛЮЧЕВАЯ ПРОВЕРКА
+        )
+        .first()
+    )
+
+    if not order:
+        # Не раскрываем, существует ли заказ у другого пользователя
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found"
+        )
+
+    return {
+        "id": order.id,
+        "status": order.status,
+        "total_price": order.total_price,
+    }
