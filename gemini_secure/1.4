@@ -1,0 +1,47 @@
+from fastapi import FastAPI, HTTPException, Depends, status
+from pydantic import BaseModel
+from typing import Optional
+
+app = FastAPI()
+
+# Имитация модели пользователя
+class User(BaseModel):
+    username: str
+    is_admin: bool
+
+# Имитация базы данных комментариев
+comments_db = {
+    1: {"text": "Это первый комментарий", "author": "user1"},
+    2: {"text": "Это второй комментарий", "author": "user2"},
+}
+
+# Зависимость для проверки прав администратора
+def get_current_admin_user(token: str):
+    # В реальном приложении здесь будет логика проверки JWT токена
+    # Для примера имитируем проверку:
+    user = User(username="admin_user", is_admin=True) # Имитация извлеченного юзера
+    
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="У вас недостаточно прав для выполнения этого действия"
+        )
+    return user
+
+@app.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_comment(
+    comment_id: int, 
+    current_user: User = Depends(get_current_admin_user)
+):
+    # 1. Проверяем существование комментария
+    if comment_id not in comments_db:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Комментарий не найден"
+        )
+    
+    # 2. Удаляем комментарий
+    del comments_db[comment_id]
+    
+    # 204 No Content не возвращает тело ответа
+    return None
