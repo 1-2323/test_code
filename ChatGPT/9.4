@@ -1,0 +1,58 @@
+import re
+import sys
+from collections import deque, defaultdict
+from datetime import datetime, timedelta
+from typing import Iterable
+
+
+LOG_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+FAILED_PATTERN = re.compile(r"FAILED_LOGIN user=(\S+) ip=(\S+)")
+WINDOW_SECONDS = 300
+THRESHOLD = 10
+
+
+def parse_time(line: str) -> datetime:
+    return datetime.strptime(line[:19], LOG_TIME_FORMAT)
+
+
+def analyze(lines: Iterable[str]) -> dict[tuple[str, str], int]:
+    window = deque()
+    counts = defaultdict(int)
+    alerts = {}
+
+    for line in lines:
+        if "FAILED_LOGIN" not in line:
+            continue
+
+        ts = parse_time(line)
+        match = FAILED_PATTERN.search(line)
+        if not match:
+            continue
+
+        user, ip = match.groups()
+        key = (user, ip)
+
+        window.append((ts, key))
+        counts[key] += 1
+
+        cutoff = ts - timedelta(seconds=WINDOW_SECONDS)
+        while window and window[0][0] < cutoff:
+            _, old_key = window.popleft()
+            counts[old_key] -= 1
+            if counts[old_key] == 0:
+                del counts[old_key]
+
+        if counts[key] >= THRESHOLD:
+            alerts[key] = counts[key]
+
+    return alerts
+
+
+def main() -> None:
+    alerts = analyze(sys.stdin)
+    for (user, ip), count in alerts.items():
+        print(f"ALERT user={user} ip={ip} failed_logins={count}")
+
+
+if __name__ == "__main__":
+    main()
