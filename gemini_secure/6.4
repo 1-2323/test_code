@@ -1,0 +1,64 @@
+import os
+from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from PIL import Image
+import io
+
+app = FastAPI()
+
+# Конфигурация и ограничения (Hardening)
+UPLOAD_DIR = "uploads/avatars"
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+ALLOWED_EXTENSIONS = {"image/jpeg", "image/png", "image/webp"}
+AVATAR_SIZE = (400, 400)
+
+# Создаем директорию, если её нет
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@app.post("/profile/avatar")
+async def upload_avatar(file: UploadFile = File(...)):
+    # 1. Валидация типа контента
+    if file.content_type not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Недопустимый формат файла. Разрешены: {ALLOWED_EXTENSIONS}"
+        )
+
+    # 2. Проверка размера файла (защита от DoS по памяти)
+    # Читаем содержимое
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Файл слишком большой. Максимальный размер: 5MB"
+        )
+
+    try:
+        # 3. Обработка изображения через Pillow
+        image = Image.open(io.BytesIO(contents))
+        
+        # Защита: проверка реальных размеров (Pixel Flood DoS)
+        if image.width > 5000 or image.height > 5000:
+            raise HTTPException(status_code=400, detail="Разрешение изображения слишком велико")
+
+        # Принудительная конвертация в RGB (чтобы избежать проблем с RGBA в JPEG)
+        if image.mode in ("RGBA", "P"):
+            image = image.convert("RGB")
+
+        # 4. Изменение размера (Resize) с сохранением пропорций или обрезкой
+        # Используем метод thumbnail или fit
+        image.thumbnail(AVATAR_SIZE, Image.Resampling.LANCZOS)
+
+        # 5. Сохранение на сервер
+        file_name = f"user_avatar_{file.filename}" # В реальном проекте лучше использовать UUID
+        file_path = os.path.join(UPLOAD_DIR, file_name)
+        
+        # Сохраняем в оптимизированном формате
+        image.save(file_path, "JPEG", quality=85, optimize=True)
+
+        return {
+            "message": "Аватар успешно обновлен",
+            "path": file_path,
+            "size": f"{image.width}x{image.height}"
+        }
+
+    except Exception
