@@ -1,0 +1,37 @@
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+import logging
+import traceback
+
+app = FastAPI()
+
+# 1. Модель для унифицированного ответа об ошибке
+class ErrorDetail(BaseModel):
+    error: str
+    message: str
+    details: dict | None = None
+    traceback: str | None = None  # Включать только в режиме разработки!
+
+# 2. Глобальный обработчик для всех необработанных исключений
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Логируем полную ошибку для сервера
+    logging.error(f"Unhandled error: {exc}")
+    
+    # Формируем детальный ответ
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal Server Error",
+            "message": str(exc),
+            "path": request.url.path,
+            # В продакшене traceback лучше скрывать
+            "traceback": traceback.format_exc() 
+        }
+    )
+
+# Пример эндпоинта, вызывающего ошибку
+@app.get("/divide")
+async def divide():
+    return 1 / 0
