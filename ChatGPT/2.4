@@ -1,0 +1,39 @@
+import httpx
+from typing import Any, Dict, Optional
+
+
+class ExternalAPIClient:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout: float = 10.0,
+    ):
+        self._client = httpx.Client(
+            base_url=base_url,
+            timeout=timeout,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            },
+        )
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        response = self._client.request(
+            method=method,
+            url=path,
+            params=params,
+            json=json,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def close(self) -> None:
+        self._client.close()
