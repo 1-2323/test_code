@@ -1,0 +1,53 @@
+import logging
+import os
+import zipfile
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
+
+class LogManager:
+    def __init__(self, log_file, max_bytes=1024*1024, backup_count=5):
+        self.log_file = log_file
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self.logger = logging.getLogger("AppLogger")
+        self.logger.setLevel(logging.DEBUG)
+        
+        # Настройка ротации по размеру
+        # Когда log.txt достигает max_bytes, он переименовывается в log.txt.1
+        self.handler = RotatingFileHandler(
+            log_file, maxBytes=self.max_bytes, backupCount=self.backup_count
+        )
+        
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        self.handler.setFormatter(formatter)
+        self.logger.addHandler(self.handler)
+
+    def log_message(self, message):
+        self.logger.info(message)
+        # Проверяем, произошла ли ротация, чтобы архивировать старые логи
+        self._archive_old_logs()
+
+    def _archive_old_logs(self):
+        """Находит файлы логов с индексами (напр. log.txt.1) и сжимает их."""
+        log_dir = os.path.dirname(os.path.abspath(self.log_file))
+        base_name = os.path.basename(self.log_file)
+
+        for filename in os.listdir(log_dir):
+            # Ищем файлы ротации (например, app.log.1, app.log.2)
+            if filename.startswith(base_name) and filename != base_name and not filename.endswith('.zip'):
+                file_path = os.path.join(log_dir, filename)
+                zip_name = f"{file_path}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+                
+                with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    zipf.write(file_path, arcname=filename)
+                
+                # Удаляем оригинальный файл после архивации
+                os.remove(file_path)
+                print(f"Архивировано: {filename} -> {zip_name}")
+
+# Пример использования
+if __name__ == "__main__":
+    manager = LogManager("app.log", max_bytes=2000, backup_count=3)
+    
+    for i in range(100):
+        manager.log_message(f"Запись лога номер {i}: Тестовое сообщение для проверки ротации.")
