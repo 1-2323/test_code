@@ -1,0 +1,72 @@
+import httpx
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel
+from fpdf import FPDF
+from typing import List, Optional
+from io import BytesIO
+
+app = FastAPI()
+
+class ReportSection(BaseModel):
+    title: str
+    content: str
+    image_url: Optional[str] = None
+
+class ReportRequest(BaseModel):
+    filename: str = "report.pdf"
+    sections: List[ReportSection]
+
+class PDFGenerator(FPDF):
+    def header(self):
+        self.set_font("Arial", "B", 12)
+        self.cell(0, 10, "User Generated Report", border=0, ln=1, align="C")
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Arial", "I", 8)
+        self.cell(0, 10, f"Page {self.page_no()}", 0, 0, "C")
+
+@app.post("/report/generate")
+async def generate_report(data: ReportRequest):
+    pdf = PDFGenerator()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    
+    async with httpx.AsyncClient() as client:
+        for section in data.sections:
+            # Заголовок секции
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(0, 10, section.title, ln=True)
+            
+            # Текст секции
+            pdf.set_font("Arial", "", 11)
+            pdf.multi_cell(0, 10, section.content)
+            
+            # Вставка изображения по URL
+            if section.image_url:
+                try:
+                    img_response = await client.get(section.image_url, timeout=10.0)
+                    if img_response.status_code == 200:
+                        img_bytes = BytesIO(img_response.content)
+                        # Автоматическое масштабирование до ширины страницы
+                        pdf.image(img_bytes, x=10, w=100) 
+                        pdf.ln(5)
+                except Exception:
+                    # Пропускаем изображение, если оно недоступно
+                    pdf.set_font("Arial", "I", 8)
+                    pdf.cell(0, 5, "[Image could not be loaded]", ln=True)
+
+            pdf.ln(10)
+
+    # Генерация байтового потока
+    pdf_output = pdf.output(dest='S')
+    
+    return Response(
+        content=pdf_output,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={data.filename}"
+        }
+    )
