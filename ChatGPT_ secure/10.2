@@ -1,0 +1,35 @@
+import json
+import sys
+from pathlib import Path
+from typing import Any, Dict
+
+class ConfigError(Exception):
+    pass
+
+def load_config(
+    path: str | Path,
+    defaults: Dict[str, Any],
+    required_keys: set[str],
+) -> Dict[str, Any]:
+    """
+    Загружает конфигурацию из JSON-файла с fallback-значениями.
+    При критических ошибках завершает работу приложения.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        if not isinstance(config, dict):
+            raise ConfigError("Config root must be an object")
+    except Exception as e:
+        print(f"Critical configuration error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    result = defaults.copy()
+    result.update(config)
+
+    missing = required_keys - result.keys()
+    if missing:
+        print(f"Critical configuration error: missing keys {missing}", file=sys.stderr)
+        sys.exit(1)
+
+    return result
