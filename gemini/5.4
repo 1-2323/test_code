@@ -1,0 +1,33 @@
+from fastapi import FastAPI, Request
+from starlette.middleware.base import BaseHTTPMiddleware
+
+app = FastAPI()
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Защита от кликджекинга: запрещает отображение страницы в iframe
+        response.headers["X-Frame-Options"] = "DENY"
+        
+        # Защита от XSS: блокирует загрузку страницы при обнаружении атаки
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        
+        # Запрет браузеру угадывать тип контента (MIME-sniffing)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        
+        # Strict-Transport-Security (HSTS): принудительное использование HTTPS
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        
+        # Content Security Policy (CSP): ограничивает источники загрузки ресурсов
+        # В данном примере разрешены ресурсы только с того же домена ('self')
+        response.headers["Content-Security-Policy"] = "default-src 'self';"
+        
+        return response
+
+# Регистрация middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+@app.get("/")
+async def main():
+    return {"message": "Безопасные заголовки установлены!"}
