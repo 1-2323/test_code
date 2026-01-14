@@ -1,0 +1,50 @@
+import yaml
+import os
+
+class AppConfig:
+    """Объект приложения, в который будут загружены настройки."""
+    def __init__(self):
+        self.app_name = None
+        self.version = None
+        self.debug = False
+        self.db_host = None
+        self.db_port = None
+
+    def __repr__(self):
+        return f"<Config(name={self.app_name}, debug={self.debug}, db={self.db_host})>"
+
+def load_config(file_path, config_obj):
+    """
+    Загружает YAML и применяет настройки к переданному объекту.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Файл конфигурации {file_path} не найден.")
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        try:
+            # Safe_load защищает от выполнения произвольного кода из YAML
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            print(f"Ошибка при парсинге YAML: {e}")
+            return None
+
+    # Применение настроек (маппинг)
+    if data:
+        config_obj.app_name = data.get('app', {}).get('name')
+        config_obj.version = data.get('app', {}).get('version')
+        config_obj.debug = data.get('app', {}).get('debug', False)
+        
+        db_data = data.get('database', {})
+        config_obj.db_host = db_data.get('host')
+        config_obj.db_port = db_data.get('port')
+    
+    return config_obj
+
+# Пример использования:
+if __name__ == "__main__":
+    my_app_settings = AppConfig()
+    load_config('config.yaml', my_app_settings)
+    
+    print("Настройки успешно загружены:")
+    print(my_app_settings)
+
