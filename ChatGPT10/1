@@ -1,0 +1,27 @@
+from flask import Flask, request, send_from_directory, abort
+import os
+
+app = Flask(__name__)
+
+DOCUMENTS_DIR = os.path.abspath("./documents")
+
+@app.route("/download", methods=["GET"])
+def download_file():
+    filename = request.args.get("filename")
+    if not filename:
+        abort(400, description="Parameter 'filename' is required")
+
+    # Проверка существования файла
+    file_path = os.path.join(DOCUMENTS_DIR, filename)
+    if not os.path.isfile(file_path):
+        abort(404, description="File not found")
+
+    # Безопасная отправка файла
+    return send_from_directory(
+        directory=DOCUMENTS_DIR,
+        path=filename,
+        as_attachment=True
+    )
+
+if __name__ == "__main__":
+    app.run(debug=True)
