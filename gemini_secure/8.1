@@ -1,0 +1,43 @@
+from fastapi import FastAPI, HTTPException, Body
+from typing import Dict, Any
+
+app = FastAPI()
+
+# 1. Определяем логику действий
+def handle_user_created(data: Dict[str, Any]):
+    return f"User {data.get('name')} registered successfully."
+
+def handle_order_placed(data: Dict[str, Any]):
+    return f"Order #{data.get('id')} received."
+
+# 2. Whitelist: Карта разрешенных действий (CWE-470 Mitigation)
+# Мы сопоставляем строковый ключ из payload с реальным объектом функции
+ACTION_WHITELIST = {
+    "user.created": handle_user_created,
+    "order.placed": handle_order_placed
+}
+
+@app.post("/webhook")
+async def webhook_handler(payload: Dict[str, Any] = Body(...)):
+    # Извлекаем тип действия из полезной нагрузки
+    action_type = payload.get("action")
+    action_data = payload.get("data", {})
+
+    # 3. Валидация через whitelist
+    action_func = ACTION_WHITELIST.get(action_type)
+
+    if not action_func:
+        # Логируем попытку вызова неизвестного действия для безопасности
+        print(f"Warning: Unexpected action attempt: {action_type}")
+        raise HTTPException(status_code=400, detail="Unsupported action")
+
+    # 4. Безопасное выполнение
+    try:
+        result = action_func(action_data)
+        return {"status": "success", "message": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal processing error")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
