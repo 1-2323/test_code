@@ -1,0 +1,74 @@
+import logging
+import re
+import json
+from fastapi import Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("auth_events")
+
+class AuthLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Проверяем, является ли путь эндпоинтом аутентификации
+        is_auth_path = "/login" in request.url.path or "/auth" in request.url.path
+        
+        # Читаем тело запроса только для аутентификации
+        payload = {}
+        if is_auth_path and request.method == "POST":
+            try:
+                # Внимание: .json() можно вызвать только один раз, 
+                # для реального middleware может потребоваться обходной путь с кешированием тела
+                body = await request.json()
+                payload = self._sanitize_payload(body)
+            except Exception:
+                payload = {"error": "Could not parse body"}
+
+        response = await call_next(request)
+
+        # Логируем результат
+        if is_auth_path:
+            log_data = {
+                "ip": request.client.host,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "user_identifier": payload.get("email") or payload.get("username"),
+                "event": "login_success" if 200 <= response.status_code < 300 else "login_failed"
+            }
+            
+            if response.status_code >= 400:
+                logger.warning(f"Auth event: {json.dumps(log_data)}")
+            else:
+                logger.info(f"Auth event: {json.dumps(log_data)}")
+
+        return response
+
+    def _sanitize_payload(self, data: dict) -> dict:
+        """
+        Маскирует PII и удаляет секреты (CWE-532).
+        """
+        sanitized = {}
+        # Список полей, которые нужно полностью удалить
+        sensitive_keys = {"password", "token", "secret", "access_token", "refresh_token"}
+        # Список полей для маскирования (PII)
+        pii_keys = {"email", "phone", "username"}
+
+        for key, value in data.items():
+            key_lower = key.lower()
+            if key_lower in sensitive_keys:
+                continue  # Полностью исключаем пароли
+            
+            if key_lower in pii_keys and isinstance(value, str):
+                sanitized[key] = self._mask_pii(value, key_lower)
+            else:
+                sanitized[key] = value
+        return sanitized
+
+    def _mask_pii(self, value: str, field_type: str) -> str:
+        """Элементарное маскирование: u***r@example.com или +7***12"""
+        if field_type == "email" and "@" in value:
+            name, domain = value.split("@")
+            return f"{name[0]}***@{domain}"
+        if len(value) > 4:
+            return f"{value[:2]}***{value[-2:]}"
+        return "***"
