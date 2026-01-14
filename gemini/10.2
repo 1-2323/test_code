@@ -1,0 +1,49 @@
+import json
+import os
+
+class ConfigLoader:
+    def __init__(self, config_path: str, defaults: dict):
+        self.config_path = config_path
+        self.defaults = defaults
+        self.config = self._load_config()
+
+    def _load_config(self) -> dict:
+        """Загружает JSON и объединяет его с дефолтными значениями."""
+        if not os.path.exists(self.config_path):
+            print(f"Предупреждение: Файл {self.config_path} не найден. Используются значения по умолчанию.")
+            return self.defaults
+
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                user_config = json.load(f)
+                
+                # Объединяем словари: значения из файла перекрывают дефолтные
+                # В Python 3.9+ можно использовать оператор |
+                return {**self.defaults, **user_config}
+        
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Ошибка при чтении конфигурации: {e}. Используются fallback-значения.")
+            return self.defaults
+
+    def get(self, key: str):
+        """Возвращает значение по ключу."""
+        return self.config.get(key)
+
+# --- Пример использования ---
+
+DEFAULT_SETTINGS = {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "debug": False,
+    "database": "sqlite:///default.db"
+}
+
+# Инициализация
+loader = ConfigLoader("config.json", DEFAULT_SETTINGS)
+
+# Доступ к параметрам
+db_url = loader.get("database")
+is_debug = loader.get("debug")
+
+print(f"Настройка БД: {db_url}")
+print(f"Режим отладки: {is_debug}")
