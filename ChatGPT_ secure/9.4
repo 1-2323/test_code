@@ -1,0 +1,91 @@
+import logging
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
+from typing import Iterable
+
+# --- Alerting ---
+
+logger = logging.getLogger("security.alerts")
+logger.setLevel(logging.WARNING)
+
+
+class AlertSender:
+    """
+    Alert sink (SIEM, SOAR, Slack, PagerDuty, etc.).
+    """
+    def send(self, principal: str, count: int, window_sec: int) -> None:
+        logger.error(
+            {
+                "alert": "bruteforce_detected",
+                "principal": principal,
+                "failed_attempts": count,
+                "window_seconds": window_sec,
+            }
+        )
+
+
+# --- Detection logic ---
+
+class FailedLoginDetector:
+    def __init__(
+        self,
+        threshold: int = 5,
+        window_seconds: int = 300,
+        alert_sender: AlertSender | None = None,
+    ):
+        self.threshold = threshold
+        self.window = timedelta(seconds=window_seconds)
+        self.alert_sender = alert_sender or AlertSender()
+        self.events: dict[str, deque[datetime]] = defaultdict(deque)
+
+    def process_event(
+        self,
+        *,
+        principal_hash: str,
+        timestamp: datetime,
+        success: bool,
+    ) -> None:
+        if success:
+            self.events.pop(principal_hash, None)
+            return
+
+        q = self.events[principal_hash]
+        q.append(timestamp)
+
+        cutoff = timestamp - self.window
+        while q and q[0] < cutoff:
+            q.popleft()
+
+        if len(q) >= self.threshold:
+            self.alert_sender.send(
+                principal=principal_hash,
+                count=len(q),
+                window_sec=int(self.window.total_seconds()),
+            )
+            q.clear()  # prevent alert flooding
+
+
+# --- Log ingestion ---
+
+def analyze_logs(
+    records: Iterable[dict],
+    detector: FailedLoginDetector,
+) -> None:
+    """
+    Expects normalized log records:
+    {
+        "timestamp": ISO-8601 string,
+        "event": "auth.login",
+        "result": "success" | "failure",
+        "principal_hash": "<hash>"
+    }
+    """
+    for r in records:
+        if r.get("event") != "auth.login":
+            continue
+
+        detector.process_event(
+            principal_hash=r.get("principal_hash", "unknown"),
+            timestamp=datetime.fromisoformat(r["timestamp"]),
+            success=r.get("result") == "success",
+        )
