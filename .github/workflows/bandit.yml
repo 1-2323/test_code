@@ -1,0 +1,28 @@
+name: Bandit SAST (detect only)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  bandit:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install Bandit
+      run: pip install bandit
+
+    - name: Run Bandit (detect only)
+      run: |
+        bandit -r . -ll || true
