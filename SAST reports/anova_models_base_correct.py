@@ -2,7 +2,6 @@ import json
 import pandas as pd
 from scipy.stats import f_oneway
 from pathlib import Path
-import re
 
 INPUT_JSON = "normalized-report.json"
 
@@ -12,37 +11,35 @@ with open(INPUT_JSON, encoding="utf-8") as f:
 
 df = pd.DataFrame(data)
 
-# === ФИЛЬТР: ТОЛЬКО base ===
-df = df[df["file"].str.contains(r"/base/", regex=True, na=False)]
-
-# === ИЗВЛЕЧЕНИЕ МОДЕЛИ И QUERY ===
+# === ИЗВЛЕЧЕНИЕ МОДЕЛИ, ТИПА И СЦЕНАРИЯ ===
 def parse_path(path):
     parts = Path(path).parts
-    try:
-        model = parts[0]
-        base_index = parts.index("base")
-        query = parts[base_index + 1]  # queryX.py или папка
-        return model, query
-    except Exception:
-        return None, None
+    model_raw = parts[0]              # имя папки
+    scenario = Path(parts[-1]).stem   # номер сценария без .py
 
-df[["model", "query"]] = df["file"].apply(
+    is_secure = model_raw.endswith("_secure")
+    model = model_raw.replace("_secure", "")
+
+    return model, is_secure, scenario
+
+df[["model", "secure", "scenario"]] = df["file"].apply(
     lambda p: pd.Series(parse_path(p))
 )
 
-df = df.dropna(subset=["model", "query"])
+# === ФИЛЬТР: ТОЛЬКО BASE ===
+df = df[df["secure"] == False]
 
-# === ПОДСЧЁТ УЯЗВИМОСТЕЙ НА ОДИН QUERY ===
-query_counts = (
-    df.groupby(["model", "query"])
+# === ПОДСЧЁТ УЯЗВИМОСТЕЙ НА СЦЕНАРИЙ ===
+scenario_counts = (
+    df.groupby(["model", "scenario"])
       .size()
       .reset_index(name="vuln_count")
 )
 
-# === ФОРМИРОВАНИЕ ГРУПП ДЛЯ ANOVA ===
+# === ФОРМИРОВАНИЕ ГРУПП ===
 groups = {
     model: grp["vuln_count"].values
-    for model, grp in query_counts.groupby("model")
+    for model, grp in scenario_counts.groupby("model")
     if len(grp) >= 2
 }
 
@@ -55,7 +52,8 @@ f_stat, p_value = f_oneway(*groups.values())
 # === ВЫВОД ===
 print("Однофакторный дисперсионный анализ (ANOVA)")
 print("Фактор: языковая модель")
-print("Единица наблюдения: один запрос (base)")
+print("Тип кода: base (без _secure)")
+print("Единица наблюдения: сценарий")
 print("-" * 60)
 
 for model, values in groups.items():
