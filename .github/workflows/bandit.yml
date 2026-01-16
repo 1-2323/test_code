@@ -25,4 +25,9 @@ jobs:
 
     - name: Run Bandit (detect only)
       run: |
-        bandit -r . -ll || true
+        bandit -r . -f json -o bandit-report.json || true
+    - uses: actions/upload-artifact@v4
+      with:
+        name: bandit-report
+        path: bandit-report.json
+
