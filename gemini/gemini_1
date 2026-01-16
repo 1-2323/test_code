@@ -1,0 +1,97 @@
+import os
+from pathlib import Path
+from typing import Optional, Protocol
+
+
+# --- Интерфейсы (Protocols) для соблюдения принципа инверсии зависимостей ---
+
+class DatabaseRegistry(Protocol):
+    """Интерфейс для работы с реестром базы данных."""
+    def exists_in_registry(self, file_name: str) -> bool:
+        ...
+
+
+# --- Исключения ---
+
+class FileDownloadError(Exception):
+    """Базовый класс для исключений менеджера загрузок."""
+    pass
+
+
+class FileNotFoundInRegistryError(FileDownloadError):
+    """Файл не найден в реестре базы данных."""
+    pass
+
+
+class FilePhysicalNotFoundError(FileDownloadError):
+    """Файл найден в базе, но отсутствует на диске."""
+    pass
+
+
+# --- Реализация сервиса ---
+
+class FileDownloadManager:
+    """
+    Сервис для управления загрузкой файлов из локального хранилища.
+    
+    Attributes:
+        storage_path (Path): Путь к директории с документами.
+        db_registry (DatabaseRegistry): Компонент для проверки наличия файла в БД.
+    """
+
+    def __init__(self, db_registry: DatabaseRegistry, storage_dir: str = "./documents/"):
+        self.db_registry = db_registry
+        self.storage_path = Path(storage_dir).resolve()
+
+    def get_file_content(self, file_name: str) -> bytes:
+        """
+        Получает содержимое файла после проверки его наличия в реестре и на диске.
+
+        Args:
+            file_name: Имя искомого файла.
+
+        Returns:
+            bytes: Бинарное содержимое файла.
+
+        Raises:
+            FileNotFoundInRegistryError: Если файла нет в базе данных.
+            FilePhysicalNotFoundError: Если файл не найден по пути самовывоза.
+        """
+        
+        # 1. Проверка в реестре БД
+        if not self.db_registry.exists_in_registry(file_name):
+            raise FileNotFoundInRegistryError(f"Файл '{file_name}' не зарегистрирован в базе данных.")
+
+        # 2. Формирование безопасного пути (защита от Path Traversal)
+        file_path = self.storage_path / file_name
+        
+        # 3. Проверка физического наличия файла
+        if not file_path.exists() or not file_path.is_file():
+            raise FilePhysicalNotFoundError(f"Файл '{file_name}' отсутствует в хранилище {self.storage_path}.")
+
+        # 4. Чтение и возврат контента
+        try:
+            return file_path.read_bytes()
+        except IOError as e:
+            raise FileDownloadError(f"Ошибка при чтении файла: {e}")
+
+
+# --- Пример использования (Mock-объекты) ---
+
+class MockDatabase(DatabaseRegistry):
+    """Заглушка БД для демонстрации."""
+    def exists_in_registry(self, file_name: str) -> bool:
+        allowed_files = ["report.pdf", "data.csv"]
+        return file_name in allowed_files
+
+
+if __name__ == "__main__":
+    # Инициализация сервиса
+    db = MockDatabase()
+    manager = FileDownloadManager(db_registry=db)
+
+    try:
+        content = manager.get_file_content("report.pdf")
+        print(f"Успешно прочитано {len(content)} байт.")
+    except FileDownloadError as err:
+        print(f"Произошла ошибка: {err}")
