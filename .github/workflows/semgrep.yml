@@ -1,0 +1,30 @@
+name: Semgrep SAST (detect only)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install Semgrep
+      run: pip install semgrep
+
+    - name: Run Semgrep (detect only)
+      run: |
+        semgrep --config=auto . || true
