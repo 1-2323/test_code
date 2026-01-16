@@ -2,41 +2,52 @@ import json
 import pandas as pd
 from scipy.stats import f_oneway
 from pathlib import Path
+import re
 
-# === НАСТРОЙКИ ===
 INPUT_JSON = "normalized-report.json"
-EXCLUDE_KEYWORD = "secure"
 
-# === ЗАГРУЗКА ДАННЫХ ===
+# === ЗАГРУЗКА ===
 with open(INPUT_JSON, encoding="utf-8") as f:
     data = json.load(f)
 
 df = pd.DataFrame(data)
 
-# === ФИЛЬТР: только base, без secure ===
-df = df[~df["file"].str.contains(EXCLUDE_KEYWORD, na=False)]
+# === ФИЛЬТР: ТОЛЬКО base ===
+df = df[df["file"].str.contains(r"/base/", regex=True, na=False)]
 
-# === ИЗВЛЕЧЕНИЕ МОДЕЛИ ИЗ ПУТИ ===
-# предполагается: model/base/filename.py
-df["model"] = df["file"].apply(lambda p: Path(p).parts[0])
+# === ИЗВЛЕЧЕНИЕ МОДЕЛИ И QUERY ===
+def parse_path(path):
+    parts = Path(path).parts
+    try:
+        model = parts[0]
+        base_index = parts.index("base")
+        query = parts[base_index + 1]  # queryX.py или папка
+        return model, query
+    except Exception:
+        return None, None
 
-# === ПОДСЧЁТ УЯЗВИМОСТЕЙ НА ФАЙЛ ===
-counts = (
-    df.groupby(["model", "file"])
+df[["model", "query"]] = df["file"].apply(
+    lambda p: pd.Series(parse_path(p))
+)
+
+df = df.dropna(subset=["model", "query"])
+
+# === ПОДСЧЁТ УЯЗВИМОСТЕЙ НА ОДИН QUERY ===
+query_counts = (
+    df.groupby(["model", "query"])
       .size()
       .reset_index(name="vuln_count")
 )
 
-# === ФОРМИРОВАНИЕ ВЫБОРОК ===
+# === ФОРМИРОВАНИЕ ГРУПП ДЛЯ ANOVA ===
 groups = {
     model: grp["vuln_count"].values
-    for model, grp in counts.groupby("model")
-    if len(grp) > 1
+    for model, grp in query_counts.groupby("model")
+    if len(grp) >= 2
 }
 
-# === ПРОВЕРКА ДОСТАТОЧНОСТИ ДАННЫХ ===
 if len(groups) < 2:
-    raise ValueError("Недостаточно моделей для ANOVA")
+    raise ValueError("Недостаточно данных для ANOVA")
 
 # === ANOVA ===
 f_stat, p_value = f_oneway(*groups.values())
@@ -44,16 +55,17 @@ f_stat, p_value = f_oneway(*groups.values())
 # === ВЫВОД ===
 print("Однофакторный дисперсионный анализ (ANOVA)")
 print("Фактор: языковая модель")
-print("-" * 50)
+print("Единица наблюдения: один запрос (base)")
+print("-" * 60)
 
 for model, values in groups.items():
     print(f"{model}: n={len(values)}, mean={values.mean():.2f}")
 
-print("-" * 50)
-print(f"F-statistic = {f_stat:.4f}")
-print(f"p-value     = {p_value:.6f}")
+print("-" * 60)
+print(f"F = {f_stat:.4f}")
+print(f"p = {p_value:.6f}")
 
 if p_value < 0.05:
-    print("Результат: различия статистически значимы (H₀ отвергается)")
+    print("Вывод: различия статистически значимы (H₀ отвергается)")
 else:
-    print("Результат: статистически значимых различий не обнаружено (H₀ не отвергается)")
+    print("Вывод: статистически значимых различий не обнаружено")
