@@ -1,4 +1,4 @@
-name: CodeQL SAST (detect only, JSON report)
+name: CodeQL SAST (detect only, full report)
 
 on:
   push:
@@ -9,62 +9,39 @@ on:
 
 jobs:
   analyze:
+    name: CodeQL Analyze
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       security-events: write
 
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ "python" ]
+
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
-        languages: python
+        languages: ${{ matrix.language }}
         queries: security-and-quality
 
     - name: Autobuild
       uses: github/codeql-action/autobuild@v3
 
-    - name: Run CodeQL analysis (SARIF)
+    - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
       with:
-        upload: false
         output: codeql-results
+        upload: false   # ⬅️ ВАЖНО: не в Code Scanning UI, а в файл
 
-    # ⬇️ ВАЖНЫЙ ШАГ: SARIF → JSON
-    - name: Convert SARIF to JSON
-      run: |
-        python << 'EOF'
-        import json
-        import glob
-
-        sarif_file = glob.glob("codeql-results/*.sarif")[0]
-
-        with open(sarif_file) as f:
-            sarif = json.load(f)
-
-        results = sarif["runs"][0]["results"]
-        normalized = []
-
-        for r in results:
-            loc = r["locations"][0]["physicalLocation"]
-            normalized.append({
-                "tool": "CodeQL",
-                "rule_id": r["ruleId"],
-                "severity": r.get("properties", {}).get("severity"),
-                "file": loc["artifactLocation"]["uri"],
-                "start_line": loc["region"]["startLine"],
-                "message": r["message"]["text"],
-            })
-
-        with open("codeql-report.json", "w") as f:
-            json.dump(normalized, f, indent=2)
-        EOF
-
-    - name: Upload CodeQL JSON report
+    - name: Upload CodeQL SARIF report
       uses: actions/upload-artifact@v4
       with:
-        name: codeql-json-report
-        path: codeql-report.json
+        name: codeql-report
+        path: codeql-results
