@@ -1,1 +1,129 @@
+import json
+import functools
+import asyncio
+from typing import Any, Callable, Dict, TypeVar
+from pathlib import Path
+from pydantic import BaseModel, Field, field_validator
+from fastapi import FastAPI, Depends, HTTPException, Header, status
 
+# --- Типизация ---
+F = TypeVar("F", bound=Callable[..., Any])
+
+# --- Модели данных (Pydantic) ---
+
+class ApiRates(BaseModel):
+    """Настройки лимитов API."""
+    requests_per_minute: int = Field(gt=0, description="Лимит запросов в минуту")
+    burst_mode: bool = False
+
+class GlobalConfig(BaseModel):
+    """Общая модель глобальных настроек."""
+    title: str = Field(min_length=1, max_length=100)
+    api_rates: ApiRates
+    updated_at: str = ""
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Заголовок не может быть пустым")
+        return v
+
+# --- Декоратор для проверки прав доступа ---
+
+def admin_required(func: F) -> F:
+    """
+    Декоратор для проверки прав администратора.
+    В FastAPI-эндпоинтах проверка обычно идет через Depends, 
+    но здесь реализован декоратор для демонстрации логики.
+    """
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any):
+        # Имитация извлечения токена из заголовков (переданных в kwargs через FastAPI)
+        auth_token = kwargs.get("x_admin_token")
+        if auth_token != "secret-admin-key":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Доступ запрещен: требуются права администратора"
+            )
+        return await func(*args, **kwargs)
+    return wrapper  # type: ignore
+
+# --- Сервис управления конфигурацией ---
+
+class GlobalSettingsService:
+    """
+    Сервис для работы с глобальными настройками системы.
+    Реализует логику сохранения в JSON-файл и управления состоянием.
+    """
+    
+    def __init__(self, file_path: str = "config.json"):
+        self.file_path = Path(file_path)
+        self._current_config: GlobalConfig = self._load_from_disk()
+        self._lock = asyncio.Lock()  # Для предотвращения гонки данных при записи
+
+    def _load_from_disk(self) -> GlobalConfig:
+        """Загрузка конфигурации при старте сервиса."""
+        if self.file_path.exists():
+            try:
+                data = json.loads(self.file_path.read_text(encoding="utf-8"))
+                return GlobalConfig(**data)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        
+        # Дефолтные настройки, если файл отсутствует или поврежден
+        return GlobalConfig(
+            title="Default System",
+            api_rates=ApiRates(requests_per_minute=60, burst_mode=False)
+        )
+
+    async def update_settings(self, new_settings: GlobalConfig) -> GlobalConfig:
+        """
+        Обновляет текущие настройки и сохраняет их на диск.
+        """
+        async with self._lock:
+            # Обновляем временную метку
+            new_settings.updated_at = datetime.now().isoformat()
+            
+            # Сохраняем в память
+            self._current_config = new_settings
+            
+            # Имитация асинхронной записи в БД или файл
+            with open(self.file_path, "w", encoding="utf-8") as f:
+                json.dump(self._current_config.model_dump(), f, indent=4)
+            
+            return self._current_config
+
+    def get_settings(self) -> GlobalConfig:
+        """Возвращает текущие настройки."""
+        return self._current_config
+
+# --- FastAPI Приложение ---
+
+from datetime import datetime
+app = FastAPI(title="Global Settings API")
+settings_service = GlobalSettingsService()
+
+@app.get("/settings", response_model=GlobalConfig)
+async def get_current_settings():
+    """Публичный эндпоинт для получения настроек."""
+    return settings_service.get_settings()
+
+@app.put("/settings", response_model=GlobalConfig)
+@admin_required
+async def update_global_settings(
+    new_data: GlobalConfig,
+    x_admin_token: str = Header(..., alias="X-Admin-Token")
+):
+    """
+    Эндпоинт для обновления настроек. 
+    Доступен только пользователям с валидным X-Admin-Token.
+    """
+    updated_config = await settings_service.update_settings(new_data)
+    return updated_config
+
+# --- Запуск ---
+if __name__ == "__main__":
+    import uvicorn
+    # Создаем пустой файл для теста, если нужно
+    uvicorn.run(app, host="0.0.0.0", port=8080)
