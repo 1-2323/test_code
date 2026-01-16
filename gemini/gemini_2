@@ -1,0 +1,134 @@
+import uuid
+from typing import Optional, Dict
+from datetime import datetime
+from fastapi import FastAPI, Depends, HTTPException, status
+from pydantic import BaseModel, Field, ConfigDict
+
+# --- Слой моделей данных (Schemas) ---
+
+class User(BaseModel):
+    """Модель текущего пользователя."""
+    id: str
+    username: str
+    is_active: bool = True
+
+
+class OrderItem(BaseModel):
+    """Детали позиции в заказе."""
+    product_id: str
+    quantity: int
+    price_per_unit: float
+
+
+class OrderRead(BaseModel):
+    """Pydantic-модель для возврата деталей заказа клиенту."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    customer_id: str
+    items: list[OrderItem]
+    total_amount: float
+    created_at: datetime
+    status: str
+
+
+# --- Слой имитации базы данных (Mock Database) ---
+
+MOCK_ORDERS_DB = {
+    "ord-123": {
+        "id": "ord-123",
+        "customer_id": "user-99",
+        "items": [
+            {"product_id": "prod-1", "quantity": 2, "price_per_unit": 50.0},
+            {"product_id": "prod-2", "quantity": 1, "price_per_unit": 150.0}
+        ],
+        "total_amount": 250.0,
+        "created_at": datetime.now(),
+        "status": "shipped"
+    }
+}
+
+
+# --- Слой репозитория (OrderRepository) ---
+
+class OrderRepository:
+    """
+    Репозиторий для работы с заказами в базе данных.
+    Следование паттерну Repository позволяет изолировать логику хранения от API.
+    """
+
+    async def get_by_id(self, order_id: str) -> Optional[Dict]:
+        """
+        Имитирует асинхронный запрос к базе данных (SQLAlchemy/Tortoise/Motor).
+        
+        Args:
+            order_id: Уникальный идентификатор заказа.
+            
+        Returns:
+            Словарь с данными заказа или None, если заказ не найден.
+        """
+        # В реальном приложении здесь был бы: await db.execute(select(...))
+        return MOCK_ORDERS_DB.get(order_id)
+
+
+# --- Зависимости (Dependencies) ---
+
+async def get_current_user() -> User:
+    """
+    Имитация получения текущего пользователя из сессии или JWT токена.
+    В реальном проекте здесь будет проверка заголовка Authorization.
+    """
+    return User(id="user-99", username="ivan_dev")
+
+
+def get_order_repository() -> OrderRepository:
+    """Фабрика для получения экземпляра репозитория (Dependency Injection)."""
+    return OrderRepository()
+
+
+# --- API Эндпоинты ---
+
+app = FastAPI(title="Order Management Service")
+
+@app.get(
+    "/orders/{order_id}", 
+    response_model=OrderRead,
+    summary="Получение деталей заказа",
+    responses={404: {"description": "Order not found"}, 403: {"description": "Access denied"}}
+)
+async def get_order_details(
+    order_id: str,
+    current_user: User = Depends(get_current_user),
+    repo: OrderRepository = Depends(get_order_repository)
+) -> OrderRead:
+    """
+    Эндпоинт для получения информации о заказе по его ID.
+    
+    1. Получает данные из репозитория.
+    2. Проверяет права доступа текущего пользователя.
+    3. Автоматически валидирует и конвертирует данные через Pydantic.
+    """
+    
+    # 1. Запрос к БД через репозиторий
+    order_data = await repo.get_by_id(order_id)
+    
+    if not order_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Заказ с ID {order_id} не найден."
+        )
+
+    # 2. Имитация проверки прав доступа (принадлежит ли заказ пользователю)
+    if order_data["customer_id"] != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="У вас нет прав для просмотра этого заказа."
+        )
+
+    # 3. Преобразование данных в Pydantic-модель происходит автоматически 
+    # благодаря response_model=OrderRead
+    return OrderRead(**order_data)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
