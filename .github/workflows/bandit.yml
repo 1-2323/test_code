@@ -1,4 +1,4 @@
-name: Bandit SAST (detect only)
+name: Bandit SAST (detect only, full report)
 
 on:
   push:
@@ -23,11 +23,12 @@ jobs:
     - name: Install Bandit
       run: pip install bandit
 
-    - name: Run Bandit (detect only)
+    - name: Run Bandit (JSON report, detect only)
       run: |
         bandit -r . -f json -o bandit-report.json || true
-    - uses: actions/upload-artifact@v4
+
+    - name: Upload Bandit report
+      uses: actions/upload-artifact@v4
       with:
         name: bandit-report
         path: bandit-report.json
-
