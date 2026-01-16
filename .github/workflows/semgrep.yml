@@ -1,4 +1,4 @@
-name: Semgrep SAST (detect only)
+name: Semgrep SAST
 
 on:
   push:
@@ -17,14 +17,12 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-
     - name: Install Semgrep
       run: pip install semgrep
 
-    - name: Run Semgrep (detect only)
+    - name: Run Semgrep (security rules)
       run: |
-        semgrep --config=auto . || true
+        semgrep \
+          --config=auto \
+          --severity=ERROR \
+          .
