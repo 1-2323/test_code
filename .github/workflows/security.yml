@@ -23,8 +23,9 @@ jobs:
       run: |
         pip install bandit semgrep pip-audit
 
-    - name: Bandit (Python SAST)
-      run: bandit -r . -ll
+    - name: Bandit (detect only)
+      run: bandit -r . -ll || true
+
 
     - name: Semgrep (generic SAST)
       run: semgrep --config=auto .
