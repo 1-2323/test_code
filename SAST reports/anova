@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 import json
 import re
 from collections import defaultdict
@@ -11,7 +11,7 @@ SCENARIO_PATTERN = re.compile(r"_(\d+)\.py")
 
 def load_report(path: str) -> Dict[str, List[dict]]:
     """
-    Загружает unified_report.json.
+    Загружает unified_report.json с результатами статического анализа.
     """
     with open(path, "r", encoding="utf-8") as file:
         return json.load(file)
@@ -19,7 +19,8 @@ def load_report(path: str) -> Dict[str, List[dict]]:
 
 def filter_base_models(report: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
     """
-    Оставляет только модели без суффикса 'secure'.
+    Оставляет только модели без суффикса 'secure'
+    и исключает техническую категорию 'other'.
     """
     return {
         model: findings
@@ -29,20 +30,24 @@ def filter_base_models(report: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
     }
 
 
-def extract_scenario_id(location: str) -> str | None:
+def extract_scenario_id(location: str) -> Optional[str]:
     """
     Извлекает номер сценария из имени файла.
-    Пример: ChatGPT_13.py:1 → '13'
+
+    Пример:
+    ChatGPT_13.py:1 → '13'
     """
     match = SCENARIO_PATTERN.search(location)
-    return match.group(1) if match else None
+    if match:
+        return match.group(1)
+    return None
 
 
 def count_vulnerabilities_per_scenario(
     findings: List[dict],
 ) -> Dict[str, int]:
     """
-    Считает количество уязвимостей для каждого сценария.
+    Подсчитывает количество уязвимостей для каждого сценария.
     """
     counter: Dict[str, int] = defaultdict(int)
 
@@ -60,14 +65,26 @@ def prepare_anova_samples(
     base_models: Dict[str, List[dict]],
 ) -> Dict[str, List[int]]:
     """
-    Формирует выборки для ANOVA:
-    каждая выборка — количество уязвимостей по сценариям.
+    Формирует корректные выборки для ANOVA:
+    одинаковый набор сценариев для всех моделей.
     """
-    samples: Dict[str, List[int]] = {}
+    model_counters: Dict[str, Dict[str, int]] = {}
 
     for model, findings in base_models.items():
-        per_scenario = count_vulnerabilities_per_scenario(findings)
-        samples[model] = list(per_scenario.values())
+        model_counters[model] = count_vulnerabilities_per_scenario(findings)
+
+    all_scenarios = sorted(
+        {
+            scenario
+            for counters in model_counters.values()
+            for scenario in counters.keys()
+        }
+    )
+
+    samples: Dict[str, List[int]] = {}
+
+    for model, counters in model_counters.items():
+        samples[model] = [counters.get(scenario, 0) for scenario in all_scenarios]
 
     return samples
 
@@ -83,17 +100,20 @@ def run_anova(samples: Dict[str, List[int]]) -> None:
 
     print("ANOVA results (Base models only)")
     print("--------------------------------")
+    print("Models:", ", ".join(samples.keys()))
     print(f"F-statistic: {f_stat:.4f}")
     print(f"p-value:     {p_value:.6f}")
 
     if p_value < 0.05:
-        print("Conclusion: H0 rejected — differences are statistically significant")
+        print("Conclusion: H0 rejected — statistically significant differences detected")
     else:
         print("Conclusion: H0 not rejected — no statistically significant differences")
 
 
 def main() -> None:
-    report = load_report("unified_report.json")
+    report_path = "unified_report.json"
+
+    report = load_report(report_path)
     base_models = filter_base_models(report)
     samples = prepare_anova_samples(base_models)
 
