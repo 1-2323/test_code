@@ -1,0 +1,160 @@
+# chi_square_analysis_merged.py
+# χ²-тест независимости: модель ↔ тип уязвимости (rule_id)
+# base и secure объединяются внутри каждой модели
+
+from collections import defaultdict
+import json
+import re
+
+try:
+    import numpy as np
+    from scipy.stats import chi2_contingency
+except ImportError:
+    print("Требуются numpy и scipy")
+    print("Установите: pip install numpy scipy")
+    exit(1)
+
+
+SCENARIO_PATTERN = re.compile(r'_(\d+)\.py')
+
+
+def load_report(path="unified_report.json"):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print("Ошибка чтения файла:", e)
+        exit(1)
+
+
+def get_base_model_name(key):
+    """Возвращает только базовое имя модели, игнорируя _secure"""
+    k = key.lower()
+    if "chatgpt" in k:
+        return "ChatGPT"
+    if "deepseek" in k:
+        return "DeepSeek"
+    if "gemini" in k:
+        return "Gemini"
+    return "Other"
+
+
+def extract_scenario_id(location):
+    m = SCENARIO_PATTERN.search(location)
+    return m.group(1) if m else None
+
+
+def collect_rule_frequencies(report):
+    """
+    Собираем частоты rule_id для каждой базовой модели
+    (находки из base и secure суммируются)
+    """
+    frequency = defaultdict(lambda: defaultdict(int))
+
+    for group_key, findings in report.items():
+        if "other" in group_key.lower() or "normalize" in group_key.lower():
+            continue
+
+        model = get_base_model_name(group_key)
+        if model == "Other":
+            continue
+
+        for item in findings:
+            details = item.get("details", [])
+            if not details:
+                continue
+
+            rule_id = None
+            for d in details:
+                rid = d.get("rule_id")
+                if rid:
+                    rule_id = rid
+                    break  # берём первое найденное
+
+            if rule_id:
+                frequency[model][rule_id] += 1
+
+    return frequency
+
+
+def build_contingency_table(frequency):
+    """Строим таблицу: строки = модели, столбцы = rule_id"""
+    models = sorted([m for m in frequency if m != "Other"])
+    if not models:
+        print("Не найдено ни одной модели")
+        return None, None, None
+
+    all_rules = set()
+    for m in models:
+        all_rules.update(frequency[m].keys())
+    rules = sorted(list(all_rules))
+
+    if not rules:
+        print("Не найдено ни одного уникального rule_id")
+        return None, None, None
+
+    table = np.zeros((len(models), len(rules)), dtype=int)
+
+    for i, model in enumerate(models):
+        for j, rule in enumerate(rules):
+            table[i, j] = frequency[model].get(rule, 0)
+
+    return table, models, rules
+
+
+def run_chi_square():
+    report = load_report()
+    freq = collect_rule_frequencies(report)
+    table, models, rules = build_contingency_table(freq)
+
+    if table is None:
+        return
+
+    print("\nХи-квадрат тест независимости (base + secure объединены)")
+    print("Модель ↔ Тип уязвимости (rule_id)")
+    print("=" * 70)
+
+    print("Модели в анализе:")
+    for m in models:
+        print(f"  • {m}")
+    print(f"\nУникальных типов уязвимостей (rule_id): {len(rules)}")
+    print(f"Размер таблицы: {table.shape[0]} × {table.shape[1]}")
+    print(f"Общее количество находок: {table.sum()}\n")
+
+    if table.sum() < 40:
+        print("Предупреждение: мало находок (< 40) → результаты могут быть ненадёжными")
+    if min(table.shape) < 2:
+        print("Таблица слишком маленькая → тест не имеет смысла")
+        return
+
+    # Сам тест (без Yates' correction — для больших таблиц это нормально)
+    chi2, p_value, dof, expected = chi2_contingency(table, correction=False)
+
+    print(f"χ²-статистика:     {chi2:.4f}")
+    print(f"Степени свободы:   {dof}")
+    print(f"p-значение:        {p_value:.6f}")
+
+    if p_value < 0.05:
+        print("\nВывод: нулевая гипотеза ОТВЕРГАЕТСЯ (p < 0.05)")
+        print("   → Существует статистически значимая связь")
+        print("     между моделью и распределением типов уязвимостей")
+    else:
+        print("\nВывод: нулевая гипотеза НЕ отвергается (p ≥ 0.05)")
+        print("   → Нет статистически значимых различий в распределении типов уязвимостей между моделями")
+
+    # Топ самых частых rule_id
+    print("\nТоп-8 самых частых rule_id (все модели вместе):")
+    flat = table.flatten()
+    top_idx = np.argsort(flat)[::-1][:8]
+    for idx in top_idx:
+        if flat[idx] == 0:
+            continue
+        row, col = np.unravel_index(idx, table.shape)
+        count = flat[idx]
+        print(f"{count:4d} раз   {rules[col]:<45}   ({models[row]})")
+
+
+if __name__ == "__main__":
+    print("χ²-тест (base и secure объединены внутри моделей)")
+    print("-" * 65)
+    run_chi_square()
