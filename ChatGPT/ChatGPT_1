@@ -1,0 +1,91 @@
+from pathlib import Path
+from typing import Dict
+
+
+class FileNotFoundInRegistryError(Exception):
+    """Исключение, возникающее если файл отсутствует в реестре базы данных."""
+    pass
+
+
+class FileNotFoundInStorageError(Exception):
+    """Исключение, возникающее если файл отсутствует в локальном хранилище."""
+    pass
+
+
+class FileRegistry:
+    """
+    Класс-абстракция над реестром файлов.
+    В реальном проекте здесь была бы работа с БД.
+    """
+
+    def __init__(self, registered_files: Dict[str, str]) -> None:
+        """
+        :param registered_files: словарь зарегистрированных файлов
+        (имя файла -> относительный путь)
+        """
+        self._registered_files: Dict[str, str] = registered_files
+
+    def contains(self, filename: str) -> bool:
+        """Проверяет наличие файла в реестре."""
+        return filename in self._registered_files
+
+    def get_relative_path(self, filename: str) -> str:
+        """Возвращает относительный путь файла."""
+        return self._registered_files[filename]
+
+
+class FileDownloadManager:
+    """
+    Сервис для загрузки файлов из локального хранилища.
+    """
+
+    BASE_DIRECTORY: Path = Path("./documents")
+
+    def __init__(self, registry: FileRegistry) -> None:
+        """
+        :param registry: реестр файлов (БД или её абстракция)
+        """
+        self._registry: FileRegistry = registry
+
+    def download_file(self, filename: str) -> bytes:
+        """
+        Загружает файл по имени.
+
+        Алгоритм:
+        1. Проверяет наличие файла в реестре
+        2. Проверяет наличие файла в файловой системе
+        3. Возвращает содержимое файла в виде bytes
+
+        :param filename: имя файла
+        :return: содержимое файла
+        :raises FileNotFoundInRegistryError: если файл не зарегистрирован
+        :raises FileNotFoundInStorageError: если файл отсутствует в хранилище
+        """
+        if not self._registry.contains(filename):
+            raise FileNotFoundInRegistryError(
+                f"Файл '{filename}' отсутствует в реестре."
+            )
+
+        file_path: Path = self._build_file_path(filename)
+
+        if not file_path.exists() or not file_path.is_file():
+            raise FileNotFoundInStorageError(
+                f"Файл '{filename}' отсутствует в локальном хранилище."
+            )
+
+        return self._read_file(file_path)
+
+    def _build_file_path(self, filename: str) -> Path:
+        """
+        Формирует полный путь к файлу на основе реестра.
+        """
+        relative_path: str = self._registry.get_relative_path(filename)
+        return self.BASE_DIRECTORY / relative_path
+
+    @staticmethod
+    def _read_file(file_path: Path) -> bytes:
+        """
+        Читает файл из файловой системы.
+        """
+        with file_path.open("rb") as file:
+            return file.read()
