@@ -1,80 +1,118 @@
-from typing import Dict, List
+# correlation_analysis.py
+# Анализ корреляции между режимом (base / secure) и количеством уязвимостей
+# Совместимо с Python 3.7+
+
+from __future__ import print_function
+
 import json
 import re
-import numpy as np
-from scipy import stats
+from collections import defaultdict
+
+try:
+    import numpy as np
+    from scipy import stats
+except ImportError:
+    print("Ошибка: требуется библиотека numpy и scipy")
+    print("Установите их: pip install numpy scipy")
+    exit(1)
 
 
+# Регулярное выражение для извлечения номера сценария
 SCENARIO_PATTERN = re.compile(r'_(\d+)\.py')
 
 
-def load_report(path: str = "unified_report.json") -> Dict[str, List[dict]]:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def load_report(path="unified_report.json"):
+    """Читает объединённый отчёт"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print("Не удалось прочитать файл:", e)
+        exit(1)
 
 
-def extract_scenario_id(location: str) -> str | None:
+def extract_scenario_id(location):
+    """Извлекает номер сценария из строки вида ChatGPT_13.py:45"""
     m = SCENARIO_PATTERN.search(location)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    return None
 
 
-def collect_all_differences(report: Dict) -> Tuple[List[float], List[int]]:
+def collect_data_for_correlation(report):
     """
-    Собирает разности (base - secure) и индикатор secure-режима
-    для всех сценариев всех моделей
+    Собирает все наблюдения:
+    - количество уязвимостей на сценарий
+    - флаг secure-режима (0 = base, 1 = secure)
     """
-    differences = []
-    is_secure_indicator = []  # 0 = base, 1 = secure
+    vulns_list = []           # количество уязвимостей
+    secure_flags = []         # 0 или 1
 
     for model_key, findings in report.items():
         if "other" in model_key.lower():
             continue
 
+        # Подсчёт уязвимостей по сценариям в этой модели
         counts = defaultdict(int)
         for item in findings:
-            sid = extract_scenario_id(item.get("location", ""))
+            loc = item.get("location", "")
+            sid = extract_scenario_id(loc)
             if sid:
                 counts[sid] += 1
 
-        is_secure = 1 if "secure" in model_key.lower() else 0
+        # Определяем, secure это режим или нет
+        is_secure = 1 if "_secure" in model_key.lower() else 0
 
+        # Заполняем все 50 сценариев (даже если уязвимостей 0)
         for i in range(1, 51):
             sid = str(i)
             vulns = counts.get(sid, 0)
+            vulns_list.append(vulns)
+            secure_flags.append(is_secure)
 
-            # Для корреляции нам нужны пары (разность, индикатор)
-            # Но проще собрать все значения и индикаторы
-            differences.append(vulns)
-            is_secure_indicator.append(is_secure)
-
-    return differences, is_secure_indicator
+    return vulns_list, secure_flags
 
 
-def run_correlation_analysis():
+def run_correlation():
     report = load_report()
-    vulns, secure_flag = collect_all_differences(report)
+    vulns, secure = collect_data_for_correlation(report)
 
-    if len(vulns) < 10:
-        print("Слишком мало данных для корреляции")
+    n = len(vulns)
+    if n < 20:
+        print("Слишком мало наблюдений для надёжного анализа ({})".format(n))
         return
 
-    r, p_value = stats.pearsonr(secure_flag, vulns)
+    # Корреляция Пирсона
+    r, p_value = stats.pearsonr(secure, vulns)
 
-    print("\nКорреляционный анализ Пирсона")
-    print("─" * 50)
-    print(f"Выборка: {len(vulns)} наблюдений (все сценарии всех моделей)")
-    print(f"Коэффициент корреляции r          : {r:.4f}")
-    print(f"p-значение                        : {p_value:.6f}")
+    mean_vulns_base = np.mean([v for v, s in zip(vulns, secure) if s == 0])
+    mean_vulns_secure = np.mean([v for v, s in zip(vulns, secure) if s == 1])
+
+    print("")
+    print("Корреляционный анализ Пирсона (все сценарии всех моделей)")
+    print("=" * 70)
+    print("Всего наблюдений:           {:>5}".format(n))
+    print("Количество сценариев:       {:>5} (по 50 на каждую модель/режим)".format(n // 6))
+    print("Среднее уязвимостей (base):   {:.2f}".format(mean_vulns_base))
+    print("Среднее уязвимостей (secure): {:.2f}".format(mean_vulns_secure))
+    print("-" * 70)
+    print("Коэффициент корреляции r:   {:.4f}".format(r))
+    print("p-значение:                 {:.6f}".format(p_value))
 
     if p_value < 0.05:
-        if r < 0:
-            print("→ Статистически значимая обратная связь:")
-            print("  secure-режим ассоциирован с меньшим числом уязвимостей")
+        if r < -0.05:
+            print("\nВывод: статистически значимая ОБРАТНАЯ связь")
+            print("   → secure-режим ассоциирован с меньшим количеством уязвимостей")
+        elif r > 0.05:
+            print("\nВывод: статистически значимая ПРЯМАЯ связь (неожиданно)")
+            print("   → secure-режим связан с бОльшим числом уязвимостей")
         else:
-            print("→ Статистически значимая связь, но положительная (?)")
+            print("\nВывод: связь статистически значима, но очень слабая")
     else:
-        print("→ Нет статистически значимой линейной связи между режимом и числом уязвимостей")
+        print("\nВывод: статистически значимой линейной связи не обнаружено (p ≥ 0.05)")
 
 
 if __name__ == "__main__":
-    run_correlation_analysis()
+    print("Анализ корреляции (Pearson) между режимом и числом уязвимостей")
+    print("-" * 60)
+    run_correlation()
