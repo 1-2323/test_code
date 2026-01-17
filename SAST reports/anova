@@ -1,0 +1,104 @@
+from typing import Dict, List
+import json
+import re
+from collections import defaultdict
+
+from scipy.stats import f_oneway
+
+
+SCENARIO_PATTERN = re.compile(r"_(\d+)\.py")
+
+
+def load_report(path: str) -> Dict[str, List[dict]]:
+    """
+    Загружает unified_report.json.
+    """
+    with open(path, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def filter_base_models(report: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
+    """
+    Оставляет только модели без суффикса 'secure'.
+    """
+    return {
+        model: findings
+        for model, findings in report.items()
+        if "secure" not in model.lower()
+        and model.lower() != "other"
+    }
+
+
+def extract_scenario_id(location: str) -> str | None:
+    """
+    Извлекает номер сценария из имени файла.
+    Пример: ChatGPT_13.py:1 → '13'
+    """
+    match = SCENARIO_PATTERN.search(location)
+    return match.group(1) if match else None
+
+
+def count_vulnerabilities_per_scenario(
+    findings: List[dict],
+) -> Dict[str, int]:
+    """
+    Считает количество уязвимостей для каждого сценария.
+    """
+    counter: Dict[str, int] = defaultdict(int)
+
+    for item in findings:
+        location = item.get("location", "")
+        scenario_id = extract_scenario_id(location)
+
+        if scenario_id is not None:
+            counter[scenario_id] += 1
+
+    return counter
+
+
+def prepare_anova_samples(
+    base_models: Dict[str, List[dict]],
+) -> Dict[str, List[int]]:
+    """
+    Формирует выборки для ANOVA:
+    каждая выборка — количество уязвимостей по сценариям.
+    """
+    samples: Dict[str, List[int]] = {}
+
+    for model, findings in base_models.items():
+        per_scenario = count_vulnerabilities_per_scenario(findings)
+        samples[model] = list(per_scenario.values())
+
+    return samples
+
+
+def run_anova(samples: Dict[str, List[int]]) -> None:
+    """
+    Выполняет однофакторный дисперсионный анализ (ANOVA).
+    """
+    if len(samples) < 2:
+        raise ValueError("Для ANOVA требуется минимум две группы.")
+
+    f_stat, p_value = f_oneway(*samples.values())
+
+    print("ANOVA results (Base models only)")
+    print("--------------------------------")
+    print(f"F-statistic: {f_stat:.4f}")
+    print(f"p-value:     {p_value:.6f}")
+
+    if p_value < 0.05:
+        print("Conclusion: H0 rejected — differences are statistically significant")
+    else:
+        print("Conclusion: H0 not rejected — no statistically significant differences")
+
+
+def main() -> None:
+    report = load_report("unified_report.json")
+    base_models = filter_base_models(report)
+    samples = prepare_anova_samples(base_models)
+
+    run_anova(samples)
+
+
+if __name__ == "__main__":
+    main()
