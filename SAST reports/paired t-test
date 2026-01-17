@@ -1,0 +1,103 @@
+from typing import Dict, List, Optional, Tuple
+import json
+import re
+from collections import defaultdict
+from scipy import stats
+import numpy as np
+
+
+SCENARIO_PATTERN = re.compile(r'_(\d+)\.py')
+
+
+def load_report(path: str = "unified_report.json") -> Dict[str, List[dict]]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def get_model_pairs(report: Dict) -> List[Tuple[str, str]]:
+    """Находит пары модель_base ↔ модель_secure"""
+    pairs = []
+    for key in report:
+        if "secure" not in key.lower():
+            secure_key = f"{key}_secure"
+            if secure_key in report:
+                pairs.append((key, secure_key))
+    return pairs
+
+
+def extract_scenario_id(location: str) -> Optional[str]:
+    m = SCENARIO_PATTERN.search(location)
+    return m.group(1) if m else None
+
+
+def count_vulns_per_scenario(findings: List[dict]) -> Dict[str, int]:
+    counter = defaultdict(int)
+    for item in findings:
+        loc = item.get("location", "")
+        sid = extract_scenario_id(loc)
+        if sid:
+            counter[sid] += 1
+    return counter
+
+
+def prepare_paired_data(
+    report: Dict,
+    base_key: str,
+    secure_key: str
+) -> Tuple[List[int], List[int]]:
+    """Возвращает два списка: уязвимости по сценариям для base и secure"""
+    base_counts = count_vulns_per_scenario(report.get(base_key, []))
+    secure_counts = count_vulns_per_scenario(report.get(secure_key, []))
+
+    # Собираем данные по всем возможным сценариям 1–50
+    base_list = []
+    secure_list = []
+
+    for i in range(1, 51):
+        sid = str(i)
+        base_list.append(base_counts.get(sid, 0))
+        secure_list.append(secure_counts.get(sid, 0))
+
+    return base_list, secure_list
+
+
+def run_paired_ttest(base: List[int], secure: List[int], model_name: str) -> None:
+    if len(base) != len(secure):
+        print(f"Ошибка: разная длина выборок для {model_name}")
+        return
+
+    diff = np.array(base) - np.array(secure)
+    mean_diff = np.mean(diff)
+    t_stat, p_value = stats.ttest_rel(base, secure, alternative='greater')  # base > secure ?
+
+    print(f"\nМодель: {model_name}")
+    print("─" * 50)
+    print(f"Среднее количество уязвимостей (base)  : {np.mean(base):.2f}")
+    print(f"Среднее количество уязвимостей (secure): {np.mean(secure):.2f}")
+    print(f"Средняя разность (base - secure)       : {mean_diff:.3f}")
+    print(f"t-статистика                           : {t_stat:.4f}")
+    print(f"p-значение (односторонний)             : {p_value:.6f}")
+
+    if p_value < 0.05:
+        print("→ Стат. значимое снижение уязвимостей в secure-режиме")
+    else:
+        print("→ Нет статистически значимого улучшения")
+
+
+def main_ttest():
+    report = load_report()
+    pairs = get_model_pairs(report)
+
+    if not pairs:
+        print("Не найдено ни одной пары base / secure")
+        return
+
+    print(f"Найдено пар: {len(pairs)}\n")
+
+    for base, secure in pairs:
+        base_data, secure_data = prepare_paired_data(report, base, secure)
+        run_paired_ttest(base_data, secure_data, base)
+
+
+if __name__ == "__main__":
+    main_ttest()
