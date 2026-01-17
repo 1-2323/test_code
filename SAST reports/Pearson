@@ -1,0 +1,80 @@
+from typing import Dict, List
+import json
+import re
+import numpy as np
+from scipy import stats
+
+
+SCENARIO_PATTERN = re.compile(r'_(\d+)\.py')
+
+
+def load_report(path: str = "unified_report.json") -> Dict[str, List[dict]]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def extract_scenario_id(location: str) -> str | None:
+    m = SCENARIO_PATTERN.search(location)
+    return m.group(1) if m else None
+
+
+def collect_all_differences(report: Dict) -> Tuple[List[float], List[int]]:
+    """
+    Собирает разности (base - secure) и индикатор secure-режима
+    для всех сценариев всех моделей
+    """
+    differences = []
+    is_secure_indicator = []  # 0 = base, 1 = secure
+
+    for model_key, findings in report.items():
+        if "other" in model_key.lower():
+            continue
+
+        counts = defaultdict(int)
+        for item in findings:
+            sid = extract_scenario_id(item.get("location", ""))
+            if sid:
+                counts[sid] += 1
+
+        is_secure = 1 if "secure" in model_key.lower() else 0
+
+        for i in range(1, 51):
+            sid = str(i)
+            vulns = counts.get(sid, 0)
+
+            # Для корреляции нам нужны пары (разность, индикатор)
+            # Но проще собрать все значения и индикаторы
+            differences.append(vulns)
+            is_secure_indicator.append(is_secure)
+
+    return differences, is_secure_indicator
+
+
+def run_correlation_analysis():
+    report = load_report()
+    vulns, secure_flag = collect_all_differences(report)
+
+    if len(vulns) < 10:
+        print("Слишком мало данных для корреляции")
+        return
+
+    r, p_value = stats.pearsonr(secure_flag, vulns)
+
+    print("\nКорреляционный анализ Пирсона")
+    print("─" * 50)
+    print(f"Выборка: {len(vulns)} наблюдений (все сценарии всех моделей)")
+    print(f"Коэффициент корреляции r          : {r:.4f}")
+    print(f"p-значение                        : {p_value:.6f}")
+
+    if p_value < 0.05:
+        if r < 0:
+            print("→ Статистически значимая обратная связь:")
+            print("  secure-режим ассоциирован с меньшим числом уязвимостей")
+        else:
+            print("→ Статистически значимая связь, но положительная (?)")
+    else:
+        print("→ Нет статистически значимой линейной связи между режимом и числом уязвимостей")
+
+
+if __name__ == "__main__":
+    run_correlation_analysis()
