@@ -6,118 +6,127 @@ from collections import defaultdict
 from scipy.stats import f_oneway
 
 
-SCENARIO_PATTERN = re.compile(r"_(\d+)\.py")
+# Паттерн для извлечения номера сценария из имени файла
+# Поддерживает: ChatGPT_13.py, deepseek_7.py, gemini_42.py и т.д.
+SCENARIO_PATTERN = re.compile(r'_(?P<number>\d+)\.py')
 
 
-def load_report(path: str) -> Dict[str, List[dict]]:
-    """
-    Загружает unified_report.json с результатами статического анализа.
-    """
-    with open(path, "r", encoding="utf-8") as file:
-        return json.load(file)
+def load_report(path: str = "unified_report.json") -> Dict[str, List[dict]]:
+    """Загружает объединённый отчёт из JSON."""
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def filter_base_models(report: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
+def get_base_model_keys(report: Dict[str, List[dict]]) -> List[str]:
     """
-    Оставляет только модели без суффикса 'secure'
-    и исключает техническую категорию 'other'.
+    Возвращает только ключи базовых моделей (без '_secure' в названии).
+    Игнорирует 'other' и любые другие не-модельные категории.
     """
-    return {
-        model: findings
-        for model, findings in report.items()
-        if "secure" not in model.lower()
-        and model.lower() != "other"
-    }
+    base_keys = []
+    for key in report:
+        k_lower = key.lower()
+        if "secure" not in k_lower and k_lower != "other":
+            base_keys.append(key)
+    return sorted(base_keys)  # для воспроизводимости порядка
 
 
 def extract_scenario_id(location: str) -> Optional[str]:
     """
-    Извлекает номер сценария из имени файла.
-
-    Пример:
-    ChatGPT_13.py:1 → '13'
+    Извлекает номер сценария из строки вида:
+    - ChatGPT_13.py:45
+    - deepseek_7.py:12
+    - gemini_42.py:3
     """
     match = SCENARIO_PATTERN.search(location)
     if match:
-        return match.group(1)
+        return match.group("number")
     return None
 
 
 def count_vulnerabilities_per_scenario(
-    findings: List[dict],
+    findings: List[dict]
 ) -> Dict[str, int]:
     """
-    Подсчитывает количество уязвимостей для каждого сценария.
+    Подсчитывает количество уникальных уязвимостей по номерам сценариев.
+    Каждая запись в findings соответствует одному уникальному месту (location).
     """
     counter: Dict[str, int] = defaultdict(int)
 
     for item in findings:
-        location = item.get("location", "")
-        scenario_id = extract_scenario_id(location)
-
-        if scenario_id is not None:
+        loc = item.get("location", "")
+        scenario_id = extract_scenario_id(loc)
+        if scenario_id:
             counter[scenario_id] += 1
 
     return counter
 
 
-def prepare_anova_samples(
-    base_models: Dict[str, List[dict]],
+def prepare_anova_data(
+    report: Dict[str, List[dict]],
+    base_keys: List[str]
 ) -> Dict[str, List[int]]:
     """
-    Формирует корректные выборки для ANOVA:
-    одинаковый набор сценариев для всех моделей.
+    Формирует словарь: модель → список количеств уязвимостей по сценариям.
+    Только для базовых моделей.
     """
-    model_counters: Dict[str, Dict[str, int]] = {}
-
-    for model, findings in base_models.items():
-        model_counters[model] = count_vulnerabilities_per_scenario(findings)
-
-    all_scenarios = sorted(
-        {
-            scenario
-            for counters in model_counters.values()
-            for scenario in counters.keys()
-        }
-    )
-
     samples: Dict[str, List[int]] = {}
 
-    for model, counters in model_counters.items():
-        samples[model] = [counters.get(scenario, 0) for scenario in all_scenarios]
+    for model in base_keys:
+        findings = report.get(model, [])
+        per_scenario = count_vulnerabilities_per_scenario(findings)
+        
+        # Сортируем по номеру сценария, чтобы порядок был одинаковым
+        sorted_counts = [per_scenario.get(str(i), 0) for i in range(1, 51)]
+        
+        # Если у модели меньше 50 сценариев — заполняем нулями
+        samples[model] = sorted_counts
 
     return samples
 
 
-def run_anova(samples: Dict[str, List[int]]) -> None:
-    """
-    Выполняет однофакторный дисперсионный анализ (ANOVA).
-    """
+def run_anova_analysis(samples: Dict[str, List[int]]) -> None:
+    """Выполняет однофакторный дисперсионный анализ."""
     if len(samples) < 2:
-        raise ValueError("Для ANOVA требуется минимум две группы.")
+        print("Ошибка: для ANOVA требуется минимум две группы моделей.")
+        return
 
-    f_stat, p_value = f_oneway(*samples.values())
+    model_names = list(samples.keys())
+    data_groups = list(samples.values())
 
-    print("ANOVA results (Base models only)")
-    print("--------------------------------")
-    print("Models:", ", ".join(samples.keys()))
-    print(f"F-statistic: {f_stat:.4f}")
-    print(f"p-value:     {p_value:.6f}")
+    # Проверяем, что все списки одинаковой длины
+    lengths = {len(lst) for lst in data_groups}
+    if len(lengths) > 1:
+        print("Предупреждение: группы имеют разную длину → результаты могут быть искажены")
+        print("Длины:", {name: len(lst) for name, lst in samples.items()})
+
+    f_stat, p_value = f_oneway(*data_groups)
+
+    print("\nОднофакторный дисперсионный анализ (ANOVA) — только базовые модели")
+    print("─" * 65)
+    print(f"Модели в анализе: {', '.join(model_names)}")
+    print(f"Количество сценариев в каждой группе: {len(data_groups[0])}")
+    print(f"F-статистика: {f_stat:.4f}")
+    print(f"p-значение:    {p_value:.6f}")
 
     if p_value < 0.05:
-        print("Conclusion: H0 rejected — statistically significant differences detected")
+        print("\nВывод: нулевая гипотеза отвергается → между моделями есть статистически значимые различия")
     else:
-        print("Conclusion: H0 not rejected — no statistically significant differences")
+        print("\nВывод: нулевая гипотеза не отвергается → значимых различий между моделями не обнаружено")
 
 
 def main() -> None:
-    report_path = "unified_report.json"
+    report = load_report("unified_report.json")
+    base_models = get_base_model_keys(report)
 
-    report = load_report(report_path)
-    base_models = filter_base_models(report)
-    samples = prepare_anova_samples(base_models)
+    if not base_models:
+        print("Не найдено ни одной базовой модели в отчёте.")
+        print("Доступные ключи:", list(report.keys()))
+        return
 
-    run_anova(samples)
+    print("Обнаружены базовые модели:", base_models)
+
+    samples = prepare_anova_data(report, base_models)
+    run_anova_analysis(samples)
 
 
 if __name__ == "__main__":
